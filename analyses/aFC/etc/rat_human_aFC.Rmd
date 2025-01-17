@@ -1,0 +1,208 @@
+---
+title: "Rat-human aFC comparison"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+
+# eqtls <- read_tsv("../data/eqtls.txt", col_types = "cc----d-d-") %>%
+#     rename(log2_aFC = log2_aFC_eQTL) %>%
+#     filter(qval < 0.05,
+#            !is.na(log2_aFC))
+eqtls <- read_tsv("../data/eqtls/eqtls_indep.txt", col_types = "ccciciiidddddidd") %>%
+    rename(log2_aFC = log2_aFC_eQTL) %>%
+    filter(rank == 1)
+
+genes <- unique(eqtls$gene_id)
+
+# # Get homologs
+# # (https://www.r-bloggers.com/2016/10/converting-mouse-to-human-gene-names-with-biomart-package/)
+# human <- biomaRt::useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# rat <- biomaRt::useMart("ensembl", dataset = "rnorvegicus_gene_ensembl")
+# gene_map <- biomaRt::getLDS(
+#     attributes = c("ensembl_gene_id"),
+#     filters = "ensembl_gene_id",
+#     values = genes,
+#     mart = rat,
+#     attributesL = c("ensembl_gene_id_version"),
+#     martL = human,
+#     uniqueRows = TRUE
+# ) %>%
+#     rename(gene_id = Gene.stable.ID,
+#            human_id = Gene.stable.ID.version)
+# write_tsv(gene_map, "gene_map.txt")
+gene_map <- read_tsv("gene_map.txt", col_types = "cc")
+
+gtex <- tibble(file = list.files("../data/gtex/GTEx_Analysis_v8_eQTL",
+                                 pattern = "Brain_.+",
+                                 full.names = TRUE)) %>%
+    mutate(tissue = str_match(file, "Brain_(.+)\\.v8")[, 2]) %>%
+    group_by(file, tissue) %>%
+    summarise(
+        read_tsv(file, col_types = cols(gene_id = "c", qval = "d", pval_beta = "-",
+                                        log2_aFC = "d", .default = "-")),
+        .groups = "drop"
+    ) %>%
+    filter(qval <= 0.05) %>%  # GTEx site says to do <=
+    select(-file)
+
+both <- bind_rows(
+    eqtls %>% mutate(tissue = str_c("HSrat_", tissue)),
+    gtex %>% mutate(tissue = str_c("GTEx_", tissue))
+)
+```
+
+```{r}
+both %>%
+    ggplot(aes(x = tissue, y = log2_aFC)) +
+    geom_boxplot(outlier.size = 0.25) +
+    coord_flip()
+```
+
+The medians are interesting:
+
+```{r}
+both %>%
+    group_by(tissue) %>%
+    summarise(mean_log2_aFC = mean(log2_aFC),
+              median_log2_aFC = median(log2_aFC),
+              .groups = "drop") %>%
+    pivot_longer(c(mean_log2_aFC, median_log2_aFC),
+                 names_to = "stat", values_to = "value") %>%
+    ggplot(aes(x = tissue, y = value, color = stat)) +
+    geom_hline(yintercept = 0, lty = 2) +
+    geom_point() +
+    coord_flip() +
+    theme(legend.position = "top")
+```
+
+```{r}
+gene_afc <- both %>%
+    group_by(gene_id) %>%
+    # summarise(log2_aFC = list(log2_aFC))
+    summarise(mean_abs_log2_aFC = mean(abs(log2_aFC)))
+# tmp <- gene_map %>%
+#     filter(gene_id %in% eqtls$gene_id,
+#            )
+d <- gene_map %>%
+    inner_join(gene_afc %>% rename(mean_abs_log2_aFC_rat = mean_abs_log2_aFC),
+               by = "gene_id") %>%
+    inner_join(gene_afc %>% rename(mean_abs_log2_aFC_gtex = mean_abs_log2_aFC),
+               by = c("human_id" = "gene_id"))
+```
+
+Spearman correlation:
+
+```{r}
+with(d, cor(mean_abs_log2_aFC_gtex, mean_abs_log2_aFC_rat, method = "spearman"))
+d %>%
+    ggplot(aes(x = mean_abs_log2_aFC_gtex, y = mean_abs_log2_aFC_rat)) +
+    geom_point(size = 0.25) +
+    stat_smooth()
+```
+
+As seen in boxplots above, magnitude of aFC for top eQTLs is lower in HS rat than in GTEx. Is this because more eQTLs were found in GTEx? Subsample to the most significant N eQTLs for all tissues (where N is smallest count among tissues) and compare:
+
+```{r}
+N_min <- both %>%
+    count(tissue, sort = TRUE) %>%
+    slice(n()) %>%
+    pull(n)
+both %>%
+    group_by(tissue) %>%
+    arrange(qval) %>%
+    slice(1:N_min) %>%
+    ungroup() %>%
+    ggplot(aes(x = tissue, y = log2_aFC)) +
+    geom_boxplot(outlier.size = 0.25) +
+    coord_flip()
+```
+
+## Compare against correlation with other tissues (cultured cells)
+
+```{r}
+gtex_cell <- tibble(file = list.files("../data/gtex/GTEx_Analysis_v8_eQTL",
+                                 pattern = "Cells_.+",
+                                 full.names = TRUE)) %>%
+    mutate(tissue = str_match(file, "Cells_(.+)\\.v8")[, 2]) %>%
+    group_by(file, tissue) %>%
+    summarise(
+        read_tsv(file, col_types = cols(gene_id = "c", qval = "d", pval_beta = "-",
+                                        log2_aFC = "d", .default = "-")),
+        .groups = "drop"
+    ) %>%
+    filter(qval <= 0.05) %>%  # GTEx site says to do <=
+    select(-file)
+both_cell <- bind_rows(
+    eqtls %>% mutate(tissue = str_c("HSrat_", tissue)),
+    gtex_cell %>% mutate(tissue = str_c("GTEx_", tissue))
+)
+
+gene_afc_cell <- both_cell %>%
+    group_by(gene_id) %>%
+    # summarise(log2_aFC = list(log2_aFC))
+    summarise(mean_abs_log2_aFC = mean(abs(log2_aFC)))
+# tmp <- gene_map %>%
+#     filter(gene_id %in% eqtls$gene_id,
+#            )
+d <- gene_map %>%
+    inner_join(gene_afc_cell %>% rename(mean_abs_log2_aFC_rat = mean_abs_log2_aFC),
+               by = "gene_id") %>%
+    inner_join(gene_afc_cell %>% rename(mean_abs_log2_aFC_gtex = mean_abs_log2_aFC),
+               by = c("human_id" = "gene_id"))
+```
+
+Spearman correlation:
+
+```{r}
+with(d, cor(mean_abs_log2_aFC_gtex, mean_abs_log2_aFC_rat, method = "spearman"))
+d %>%
+    ggplot(aes(x = mean_abs_log2_aFC_gtex, y = mean_abs_log2_aFC_rat)) +
+    geom_point(size = 0.25) +
+    stat_smooth()
+```
+
+## Compare against correlation with all non-brain tissues
+
+```{r}
+gtex_other <- tibble(file = list.files("../data/gtex/GTEx_Analysis_v8_eQTL",
+                                     full.names = TRUE)) %>%
+    filter(str_detect(file, "Brain", negate = TRUE)) %>%
+    mutate(tissue = str_match(file, "eQTL/(.+)\\.v8")[, 2]) %>%
+    group_by(file, tissue) %>%
+    summarise(
+        read_tsv(file, col_types = cols(gene_id = "c", qval = "d", pval_beta = "-",
+                                        log2_aFC = "d", .default = "-")),
+        .groups = "drop"
+    ) %>%
+    filter(qval <= 0.05) %>%  # GTEx site says to do <=
+    select(-file)
+both_other <- bind_rows(
+    eqtls %>% mutate(tissue = str_c("HSrat_", tissue)),
+    gtex_other %>% mutate(tissue = str_c("GTEx_", tissue))
+)
+
+gene_afc_other <- both_other %>%
+    group_by(gene_id) %>%
+    # summarise(log2_aFC = list(log2_aFC))
+    summarise(mean_abs_log2_aFC = mean(abs(log2_aFC)))
+# tmp <- gene_map %>%
+#     filter(gene_id %in% eqtls$gene_id,
+#            )
+d <- gene_map %>%
+    inner_join(gene_afc_other %>% rename(mean_abs_log2_aFC_rat = mean_abs_log2_aFC),
+               by = "gene_id") %>%
+    inner_join(gene_afc_other %>% rename(mean_abs_log2_aFC_gtex = mean_abs_log2_aFC),
+               by = c("human_id" = "gene_id"))
+```
+
+Spearman correlation:
+
+```{r}
+with(d, cor(mean_abs_log2_aFC_gtex, mean_abs_log2_aFC_rat, method = "spearman"))
+d %>%
+    ggplot(aes(x = mean_abs_log2_aFC_gtex, y = mean_abs_log2_aFC_rat)) +
+    geom_point(size = 0.25) +
+    stat_smooth()
+```

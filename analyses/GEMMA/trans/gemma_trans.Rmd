@@ -1,0 +1,204 @@
+---
+title: "GEMMA trans+cis-eQTLs"
+author: "Daniel Munro"
+date: "6/3/2021"
+output: html_document
+---
+
+I'm doing all-vs-all association testing. I pruned SNPs to LD <= 0.9, resulting in 30,271 tested SNPs. I've kept only pairs with p-values < 1e-3.
+
+<!-- For now I ran GEMMA for genes on the four chromosomes with the fewest genes (11, 15, 17, 18), for a total of 1873 genes. -->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+genes <- read_tsv("~/br/data/genes.txt", col_types = "c-c---i-----") |>
+    rename(gene_chrom = chrom)
+
+top_lm <- read_tsv("~/br/data/gemma/trans/Acbc.lm.assoc.txt.gz", col_types = "c-c--------d")
+
+top_lmm <- read_tsv("~/br/data/gemma/trans/Acbc.lmm.assoc.txt.gz", col_types = "c-c----------d--")
+
+top <- full_join(
+    top_lm |> rename(p_lm = p_wald),
+    top_lmm |> rename(p_lmm = p_wald),
+    by = c("gene_id", "rs")
+) |>
+    separate(rs, c("chrom", "pos"), sep=":", convert = TRUE, remove = FALSE) |>
+    mutate(chrom = str_replace(chrom, "chr", "")) |>
+    left_join(genes, by = "gene_id") |>
+    mutate(type = if_else(gene_chrom == chrom & abs(pos - tss) < 5e6, "cis", "trans"))
+
+top2 <- top |>
+    filter(!is.na(p_lm),
+           !is.na(p_lmm))
+```
+
+Confirming cis-eQTL TSS distances make sense:
+
+```{r}
+top |>
+    filter(type == "cis") |>
+    group_by(gene_id) |>
+    arrange(p_lmm) |>
+    slice(1) |>
+    ungroup() |>
+    mutate(tss_distance = (pos - tss) / 1e6) |>
+    # filter(abs(tss_distance) < 1) |>
+    ggplot(aes(x = tss_distance)) +
+    geom_histogram(bins = 50) +
+    xlab("TSS distance (Mb)") +
+    ggtitle("Top cis-eQTL per eGene (at cutoff 1e-3)")
+```
+
+Considering all SNP-gene pairs with p-value < 1e-3 in LM or LMM, counting how many have p-value < 1e-3 in one or the other or both, and stratified by cis or trans:
+
+```{r}
+with(top, table(low_p_lm = !is.na(p_lm), low_p_lmm = !is.na(p_lmm), type))
+```
+
+For both cis and trans, there is large overlap even in terms of exact SNP-gene pairs. I'll compare p-values for LM vs LMM for each pair in this overlap, i.e. look at one quadrant of the p-value scatter plot:
+
+```{r}
+top_cor <- top2 |>
+    with(c(cor_p = cor(p_lm, p_lmm), cor_logp = cor(-log10(p_lm), -log10(p_lmm))))
+top2 |>
+    ggplot(aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 0.25, alpha = 0.25) +
+    coord_fixed() +
+    theme_minimal() +
+    ggtitle(str_glue("R = {top_cor['cor_p'] |> round(3)}"))
+
+top2 |>
+    ggplot(aes(x = -log10(p_lm), y = -log10(p_lmm))) +
+    geom_point(size = 0.25, alpha = 0.25) +
+    coord_fixed() +
+    theme_minimal() +
+    ggtitle(str_glue("R = {top_cor['cor_logp'] |> round(3)}"))
+```
+
+And stratified into cis and trans:
+
+```{r}
+tmp <- top2 |>
+    group_by(type) |>
+    summarise(
+        n = n(),
+        cor_p = cor(p_lm, p_lmm) |> round(3),
+        cor_logp = cor(-log10(p_lm), -log10(p_lmm)) |> round(3)
+    ) |>
+    mutate(label_p = str_glue("R = {cor_p}, n = {n}"),
+           label_logp = str_glue("R = {cor_logp}, n = {n}"))
+top2 |>
+    ggplot(aes(x = p_lm, y = p_lmm)) +
+    facet_wrap(~ type) +
+    geom_point(size = 0.25, alpha = 0.25) +
+    geom_text(aes(label = label_p, x = 0.00025, y = 0.001), data = tmp) +
+    coord_fixed() +
+    theme_minimal()
+
+top2 |>
+    ggplot(aes(x = -log10(p_lm), y = -log10(p_lmm))) +
+    facet_wrap(~ type) +
+    geom_point(size = 0.25, alpha = 0.25) +
+    geom_text(aes(label = label_logp, x = 10, y = 24), data = tmp) +
+    coord_fixed() +
+    theme_minimal()
+```
+
+Does LMM tend to shift p-values higher/lower?
+
+```{r}
+top2 |>
+    pivot_longer(cols = c(p_lm, p_lmm), names_to = "mode", values_to = "pval", names_prefix = "p_") |>
+    ggplot(aes(x = mode, y = pval)) +
+    facet_wrap(~ type) +
+    geom_violin() +
+    geom_boxplot(width = 0.1)
+top2 |>
+    pivot_longer(cols = c(p_lm, p_lmm), names_to = "mode", values_to = "pval", names_prefix = "p_") |>
+    ggplot(aes(x = mode, y = -log10(pval))) +
+    facet_wrap(~ type) +
+    geom_violin() +
+    geom_boxplot(width = 0.1)
+```
+
+## QQ plots
+
+I don't think I can correctly plot QQ against theoretical without full p-value distributions. But I can plot them against each other to compare their distributions.
+
+```{r}
+# top2 %>%
+#     ggplot(aes(sample = p_lmm)) +
+#     geom_qq(distribution = qunif)
+# 
+# top2 %>%
+#     ggplot(aes(sample = -log10(p_lmm))) +
+#     geom_qq(distribution = \(p) -log10(qunif(p)))
+# 
+# tmp <- top2 %>%
+#     summarise(observed = -log10(sort(p_lm)),
+#               expected = -log10(ppoints(length(p_lm)) / 1e3))
+# ggplot(tmp, aes(x = expected, y = observed)) +
+#     geom_point() +
+#     geom_abline(slope = 1, intercept = 0) +
+#     coord_fixed(xlim = c(0, max(c(tmp$observed, tmp$expected))),
+#                 ylim = c(0, max(c(tmp$observed, tmp$expected)))) +
+#     theme_minimal()
+
+tmp <- top2 %>%
+    group_by(type) %>%
+    summarise(lm = -log10(sort(p_lm)),
+              lmm = -log10(sort(p_lmm)),
+              .groups = "drop")
+ggplot(tmp, aes(x = lm, y = lmm)) +
+    facet_wrap(~ type) +
+    geom_point(size = 0.5) +
+    geom_abline(slope = 1, intercept = 0, size = 0.5, color = "red", lty = 2) +
+    coord_fixed(xlim = c(0, max(c(tmp$lm, tmp$lmm))),
+                ylim = c(0, max(c(tmp$lm, tmp$lmm)))) +
+    theme_minimal()
+```
+
+Those are for associations where LM and LMM have p<1e-3, which could be considered selecting against disparate p-values. Comparing the sets of LM and LMM p-values < 1e-3, which are of different size and thus require interpolation/subsampling for one set:
+
+```{r}
+# # Interpolate LMM values:
+# tmp <- top %>%
+#     group_by(type) %>%
+#     summarise(lm = -log10(sort(p_lm[!is.na(p_lm)])),
+#               lmm = -log10(quantile(p_lmm[!is.na(p_lmm)], ppoints(sum(!is.na(p_lm))))),
+#               .groups = "drop")
+# # Interpolate LM values:
+# tmp <- top %>%
+#     group_by(type) %>%
+#     summarise(lmm = -log10(sort(p_lmm[!is.na(p_lmm)])),
+#               lm = -log10(quantile(p_lm[!is.na(p_lm)], ppoints(sum(!is.na(p_lmm))))),
+#               .groups = "drop")
+# Subsample LMM values:
+tmp <- top %>%
+    mutate(type = fct_recode(type,
+                             "Proximal SNP-gene pairs" = "cis",
+                             "Distal SNP-gene pairs" = "trans")) |>
+    group_by(type) %>%
+    summarise(lm = -log10(sort(p_lm[!is.na(p_lm)])),
+              lmm = -log10(sort(sample(p_lmm[!is.na(p_lmm)], sum(!is.na(p_lm))))),
+              .groups = "drop")
+ggplot(tmp, aes(x = lm, y = lmm)) +
+    facet_wrap(~ type) +
+    geom_abline(slope = 1, intercept = 0, size = 0.5, color = "red", lty = 2) +
+    geom_point(size = 0.5) +
+    coord_fixed(xlim = c(0, max(c(tmp$lm, tmp$lmm))),
+                ylim = c(0, max(c(tmp$lm, tmp$lmm)))) +
+    theme_minimal() +
+    xlab(expression(-log[10]*"P, fixed effects model")) +
+    ylab(expression(-log[10]*"P, linear mixed model"))
+
+# Now plot this figure using random associations in another script.
+# ggsave("gemma_fig_QQ.png", width = 5.2, height = 3, bg = "white")
+```
+

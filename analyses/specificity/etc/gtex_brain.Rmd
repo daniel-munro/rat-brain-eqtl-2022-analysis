@@ -1,0 +1,179 @@
+---
+title: "GTEx tissue specificity"
+output: html_notebook
+---
+
+How much do GTEx eGenes overlap among the brain tissues compared to the rat brain tissues?
+
+```{r}
+library(tidyverse)
+
+gtex <- tibble(file = list.files("../data/gtex/GTEx_Analysis_v8_eQTL", "Brain_.+",
+                                 full.names = TRUE)) %>%
+    mutate(tissue = str_match(file, "Brain_(.+)\\.v8")[, 2]) %>%
+    group_by(file, tissue) %>%
+    summarise(
+        read_tsv(file, col_types = cols(gene_id = "c", qval = "d", .default = "-")),
+        .groups = "drop"
+    ) %>%
+    filter(qval <= 0.05) %>%  # GTEx site says to do <=
+    select(-file, -qval)
+
+rats <- read_tsv("../data/eqtls.txt", col_types = "cc----d---") %>%
+    filter(qval < 0.05) %>%
+    select(tissue, gene_id)
+
+eqtls <- bind_rows(
+    gtex %>% mutate(data = "GTEx"),
+    rats %>% mutate(data = "rats")
+)
+```
+
+```{r}
+# gtex %>%
+#     ggplot(aes(x = tissue)) +
+#     geom_bar() +
+#     coord_flip() +
+#     ggtitle("GTEx brain tissues")
+# 
+# rats %>%
+#     ggplot(aes(x = tissue)) +
+#     geom_bar() +
+#     coord_flip() +
+#     ggtitle("HS rat brain tissues")
+
+eqtls %>%
+    mutate(data = fct_rev(data),
+           tissue = fct_rev(tissue)) %>%
+    ggplot(aes(x = tissue)) +
+    facet_grid(rows = "data", scales = "free_y", space = "free_y") +
+    geom_bar() +
+    coord_flip() +
+    theme_minimal() +
+    xlab(NULL) +
+    ylab("Number of eGenes")
+
+# ggsave("eGene_count.png", width = 6, height = 3.5)
+```
+
+To compare eGene overlap to overlap in our data, measure pairwise overlap as Jaccard/Tanimoto index in both datasets and compare the two distributions.
+
+```{r}
+overlap <- bind_rows(
+    crossing(data = "GTEx",
+             tissue.x = unique(gtex$tissue),
+             tissue.y = unique(gtex$tissue)),
+    crossing(data = "rats",
+             tissue.x = unique(rats$tissue),
+             tissue.y = unique(rats$tissue))
+) %>%
+    filter(tissue.x < tissue.y) %>%
+    group_by(data, tissue.x, tissue.y) %>%
+    summarise({
+        set1 <- eqtls$gene_id[eqtls$tissue == tissue.x]
+        set2 <- eqtls$gene_id[eqtls$tissue == tissue.y]
+        tibble(n_intersection = length(intersect(set1, set2)),
+               n_union = length(union(set1, set2))) %>%
+            mutate(jaccard = n_intersection / n_union)
+    }, .groups = "drop")
+
+overlap %>%
+    ggplot(aes(x = data, y = jaccard)) +
+    geom_boxplot(outlier.shape = NA) +
+    ggbeeswarm::geom_beeswarm(size = 1, color = "blue")
+```
+
+Overlap in rat brain tissues tends to be higher, despite having overall smaller fractions of total genes, which would lead to lower overlap by chance.
+
+As a simplistic correction for that, subset the GTEx tissues to the 5 with the fewest eGenes.
+
+```{r}
+gtex_subset <- gtex %>%
+    count(tissue, sort = TRUE) %>%
+    slice_tail(n = 5)
+
+overlap %>%
+    filter(data == "rats" | (tissue.x %in% gtex_subset$tissue &
+                                 tissue.y %in% gtex_subset$tissue)) %>%
+    ggplot(aes(x = data, y = jaccard)) +
+    geom_boxplot(outlier.shape = NA) +
+    ggbeeswarm::geom_beeswarm(size = 1, color = "blue")
+```
+
+```{r}
+overlap %>%
+    # filter(data == "rats") %>%
+    ggplot(aes(x = n_union, y = n_intersection, color = data)) +
+    geom_point(size = 1, alpha = 0.5) +
+    expand_limits(x = 0, y = 0) +
+    theme_minimal() +
+    coord_fixed() +
+    xlab("Size of eGene union between tissues") +
+    ylab("Size of eGene intersection between tissues") +
+    ggtitle("Overlap between pairs of brain tissues")
+
+# ggsave("eGene_overlap.png", width = 6, height = 3.5)
+```
+
+## aFC
+
+Do eGenes found in more tissues have different effect sizes than those in fewer tissues?
+
+```{r}
+gtex_afc <- tibble(file = list.files("../data/gtex/GTEx_Analysis_v8_eQTL", "Brain_.+",
+                                 full.names = TRUE)) %>%
+    mutate(tissue = str_match(file, "Brain_(.+)\\.v8")[, 2]) %>%
+    group_by(file, tissue) %>%
+    summarise(
+        read_tsv(file, col_types = cols(gene_id = "c", pval_beta = "d", qval = "d",
+                                        log2_aFC = "d", .default = "-")),
+        .groups = "drop"
+    ) %>%
+    filter(qval <= 0.05) %>%  # GTEx site says to do <=
+    select(-file, -qval)
+
+rats_afc <- read_tsv("../data/eqtls.txt", col_types = "cc---dd-d-") %>%
+    filter(qval < 0.05) %>%
+    select(tissue, gene_id, pval_beta = pval, log2_aFC = log2_aFC_eQTL)
+
+afc <- bind_rows(
+    gtex_afc %>% mutate(data = "GTEx"),
+    rats_afc %>% mutate(data = "rats")
+)
+```
+
+```{r}
+afc %>%
+    filter(data == "rats") %>%
+    group_by(gene_id) %>%
+    mutate(n_tissues = n()) %>%
+    ungroup() %>%
+    mutate(n_tissues = as.factor(n_tissues),
+           log10_pval = -log10(pval_beta)) %>%
+    sample_n(nrow(.)) %>%
+    ggplot(aes(x = log2_aFC, y = log10_pval, color = n_tissues)) +
+    facet_wrap(~ tissue) +
+    geom_point(size = 0.5, alpha = 0.75) +
+    scale_color_viridis_d() +
+    theme_minimal()
+
+# ggsave("volcano_aFC.png", width = 8, height = 6)
+```
+
+```{r}
+afc %>%
+    filter(data == "GTEx") %>%
+    group_by(gene_id) %>%
+    mutate(n_tissues = n()) %>%
+    ungroup() %>%
+    mutate(log10_pval = -log10(pval_beta)) %>%
+    sample_n(nrow(.)) %>%
+    ggplot(aes(x = log2_aFC, y = log10_pval, color = n_tissues)) +
+    facet_wrap(~ tissue) +
+    geom_point(size = 0.5, alpha = 0.75) +
+    scale_color_viridis_c() +
+    theme_minimal()
+
+# ggsave("volcano_aFC_GTEx.png", width = 8, height = 8)
+```
+

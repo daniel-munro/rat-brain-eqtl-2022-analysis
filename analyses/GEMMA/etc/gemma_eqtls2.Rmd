@@ -1,0 +1,232 @@
+---
+title: "GEMMA eQTLs"
+author: "Daniel Munro"
+date: "10/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(patchwork)
+```
+
+```{r}
+top_lm <- read_tsv("../data/gemma/NAcc.lm.assoc.txt.gz",
+                   col_types = "c-c--------d") |>
+    group_by(gene_id) |>
+    sample_n(1) |>
+    ungroup()
+
+top_lmm <- read_tsv("../data/gemma/NAcc.lmm.assoc.txt.gz",
+                    col_types = "c-c----------d--") |>
+    group_by(gene_id) |>
+    sample_n(1) |>
+    ungroup()
+
+pve <- read_tsv("../data/gemma/NAcc.grm_pve.pve.txt", col_types = "cdd")
+
+top <- full_join(
+    top_lm |> select(gene_id, p_lm = p_wald),
+    top_lmm |> select(gene_id, p_lmm = p_wald),
+    by = "gene_id"
+) |>
+    left_join(pve, by = "gene_id")
+```
+
+```{r}
+top_r <- with(top, cor(p_lm, p_lmm)) |> signif(4)
+p1 <- ggplot(top, aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    coord_fixed() +
+    ggtitle("GEMMA p-values",
+            subtitle = str_glue("R = {top_r}, n = {nrow(top)}")) +
+    xlab("p-value, fixed effects model") +
+    ylab("p-value, linear mixed model")
+# p1
+
+top2_r <- with(top, cor(log10(p_lm), log10(p_lmm))) |> signif(4)
+p2 <- top |>
+    mutate(log10p_lm = log10(p_lm),
+           log10p_lmm = log10(p_lmm)) |>
+    ggplot(aes(x = log10p_lm, y = log10p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    coord_fixed() +
+    ggtitle("GEMMA log10(p-values)",
+            subtitle = str_glue("R = {top2_r}, n = {nrow(top)}")) +
+    xlab("log10(p-value), fixed effects model") +
+    ylab("log10(p-value), linear mixed model")
+# p2
+
+p1 + p2
+# ggsave("lm_lmm_pvalues.png", width = 7.5, height = 4.2)
+```
+
+```{r}
+tmp <- tibble(threshold = 10 ^ seq(from = -10, to = -2, length.out = 500)) |>
+    group_by(threshold) |>
+    summarise(`LM only` = sum(top$p_lm < threshold & top$p_lmm >= threshold),
+              `LMM only` = sum(top$p_lm >= threshold & top$p_lmm < threshold),
+              both = sum(top$p_lm < threshold & top$p_lmm < threshold),
+              .groups = "drop") |>
+    pivot_longer(-threshold, names_to = "Significant in", values_to = "eGenes") |>
+    mutate(`Significant in` = fct_relevel(`Significant in`, "LM only", "both", "LMM only"))
+
+p1 <- tmp |>
+    ggplot(aes(x = threshold, y = eGenes, fill = `Significant in`)) +
+    geom_col(width = 0.02) +
+    scale_x_log10() +
+    scale_fill_manual(values = c("#ff5555", "#aa55aa", "#5555ff")) +
+    ggtitle("Overlap of significant eGenes using LM vs. LMM (Acbc)") +
+    xlab("p-value threshold") +
+    theme_minimal()
+
+p2 <- tmp |>
+    ggplot(aes(x = threshold, y = eGenes, fill = `Significant in`)) +
+    geom_col(position = "fill", width = 0.02, show.legend = FALSE) +
+    scale_x_log10() +
+    scale_fill_manual(values = c("#ff5555", "#aa55aa", "#5555ff")) +
+    # xlab("p-value threshold") +
+    xlab(NULL) +
+    ylab("Proportion of eGenes") +
+    theme_minimal()
+
+p1 / p2
+
+# ggsave("eGene_overlap.png", width = 6, height = 6)
+```
+
+```{r}
+p3_r <- with(top, cor(log10(p_lm), log10(p_lmm))) |> signif(4)
+# Colors obtained from viridisLite::viridis(5):
+p3_cols <- c("#440154FF", "#440154FF", "#3B528BFF", "#21908CFF", "#5DC863FF", "#FDE725FF")
+# p3_vals <- scales::rescale(c(min(top$pve), (0:4) * max(top$pve) / 4))
+p3_vals <- scales::rescale(c(min(top$pve), c(0, 0.1, 0.4, 0.7, 1) * max(top$pve)))
+p3 <- top |>
+    mutate(log10p_lm = -log10(p_lm),
+           log10p_lmm = -log10(p_lmm)) |>
+    slice_sample(prop = 1L, replace = FALSE) |>
+    ggplot(aes(x = log10p_lm, y = log10p_lmm, color = pve)) +
+    geom_point(size = 0.25) +
+    # scale_color_viridis_c(limits = c(0, NA)) +
+    # scale_color_viridis_c(limits = c(0, NA), oob = scales::squish) +
+    # scale_color_gradient2(low = "red", mid = "gray", high = "blue") +
+    scale_color_gradientn(colors = p3_cols, values = p3_vals) +
+    annotate("text", x = 2, y = 23, hjust = 0,
+             label = str_glue("R = {p3_r}\nn = {nrow(top)}")) +
+    theme_minimal() +
+    labs(color = expression(PVE[GRM])) +
+    # ggtitle("p-values using LM vs. LMM (Acbc)") +
+    xlab(expression(-log[10]*"(p-value), fixed effects model")) +
+    ylab(expression(-log[10]*"(p-value), linear mixed model"))
+p3
+
+p4 <- tmp |>
+    ggplot(aes(x = threshold, y = eGenes, fill = `Significant in`)) +
+    geom_col(position = "fill", width = 0.02) +
+    scale_x_log10() +
+    scale_fill_manual(values = c("#ff5555", "#aa55aa", "#5555ff")) +
+    xlab("p-value threshold") +
+    ylab("Proportion of eGenes") +
+    theme_minimal()
+
+p3 / p4 + plot_layout(heights = c(2, 1))
+
+# # ggsave("eGene_overlap2.png", width = 8, height = 3.5)
+# ggsave("eGene_overlap2.png", width = 5, height = 5.5)
+```
+
+## GRM PVE
+
+Does PVE for the LOCO matrices explain the small differences between LM and LMM?
+
+```{r}
+top |>
+    ggplot(aes(x = p_lm, y = p_lmm, color = pve)) +
+    geom_point(size = 0.25, alpha = 0.3) +
+    scale_color_viridis_c() +
+    theme_minimal() +
+    ggtitle("p-values using LM vs. LMM (Acbc)") +
+    xlab("p-value, fixed effects model") +
+    ylab("p-value, linear mixed model")
+
+top |>
+    ggplot(aes(x = p_lm, y = p_lmm, color = pve > 0)) +
+    geom_point(size = 0.25, alpha = 0.3) +
+    theme_minimal() +
+    ggtitle("p-values using LM vs. LMM (Acbc)") +
+    xlab("p-value, fixed effects model") +
+    ylab("p-value, linear mixed model")
+```
+
+Note that these PVE values were calculated using covariates, including expression PCs and founder genotype similarity.
+
+When PVE is negative, p_lm == p_lmm:
+
+```{r}
+top |>
+    mutate(pve_rank = gene_id |> fct_reorder(pve) |> as.integer(),
+           p_lm_lmm_equal = (p_lmm - p_lm) / p_lm < 1e-4) |>
+    ggplot(aes(x = pve_rank, y = pve, ymin = pve - se_pve, ymax = pve + se_pve,
+               color = p_lm_lmm_equal)) +
+    geom_linerange(color = "gray", size = 0.1) +
+    geom_point(size = 0.2) +
+    geom_hline(yintercept = 0, lty = 3, size = 0.25) +
+    theme_minimal()
+```
+
+PVE for LM-specific, LMM-specific, and overlapping eGenes at some p-value cutoff (1e-3):
+
+```{r}
+tmp <- top |>
+    mutate(LM_eGene = p_lm < 1e-3,
+           LMM_eGene = p_lmm < 1e-3,
+           eGene = case_when(
+               LM_eGene & !LMM_eGene ~ "LM only",
+               !LM_eGene & LMM_eGene ~ "LMM only",
+               LM_eGene & LMM_eGene ~ "both",
+               TRUE ~ "neither"
+           ))
+tmp |>
+    ggplot(aes(x = eGene, y = pve)) +
+    geom_boxplot() +
+    coord_flip()
+```
+
+```{r}
+with(tmp, wilcox.test(pve[eGene == "both"],
+                      pve[eGene == "LM only"]))
+
+with(tmp, wilcox.test(pve[eGene == "both"],
+                      pve[eGene == "LMM only"]))
+```
+
+## QQ plots
+
+```{r}
+tmp <- top |>
+    summarise(lm = sort(p_lm),
+              lmm = sort(p_lmm))
+ggplot(tmp, aes(x = lm, y = lmm)) +
+    geom_point(size = 0.5) +
+    geom_abline(slope = 1, intercept = 0, size = 0.5, color = "red", lty = 2) +
+    coord_fixed(xlim = c(0, max(c(tmp$lm, tmp$lmm))),
+                ylim = c(0, max(c(tmp$lm, tmp$lmm)))) +
+    theme_minimal() +
+    xlab("P LM") +
+    ylab("P LMM")
+
+tmp <- top |>
+    summarise(lm = -log10(sort(p_lm)),
+              lmm = -log10(sort(p_lmm)))
+ggplot(tmp, aes(x = lm, y = lmm)) +
+    geom_point(size = 0.5) +
+    geom_abline(slope = 1, intercept = 0, size = 0.5, color = "red", lty = 2) +
+    coord_fixed(xlim = c(0, max(c(tmp$lm, tmp$lmm))),
+                ylim = c(0, max(c(tmp$lm, tmp$lmm)))) +
+    theme_minimal() +
+    xlab("-log10P LM") +
+    ylab("-log10P LMM")
+```
+

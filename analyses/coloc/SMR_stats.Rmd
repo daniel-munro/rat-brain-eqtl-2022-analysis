@@ -1,0 +1,240 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(patchwork)
+
+genes <- read_tsv("../../data/genes.txt", col_types = "cc----------")
+
+eqtls <- read_tsv("../../data/eqtls/eqtls_indep.txt", col_types = "cc---c-----ddd---") |>
+    mutate(z_eQTL = slope / slope_se) |>
+    select(-slope, -slope_se)
+
+qtls <- read_csv("../../data/coloc/adiposity_qtls.csv", col_types = "cc--dcdciidc") |>
+    filter(trait != "TL") |>
+    separate(topsnp, c("qtl_chrom", "qtl_pos"), sep = ":")
+    # mutate(chrom = as.integer(str_replace(chrom, "chr", "")))
+
+sig <- read_tsv("SMR_sig.tsv", col_types = "cccdcddd")
+
+gwas_dir <- "../../data/coloc/adiposity_GWAS/"
+gwas <- tibble(file = list.files(gwas_dir)) |>
+    group_by(file) |>
+    summarise(
+        read_tsv(str_c(gwas_dir, file), col_types = "-c-----dd-----d",
+                 col_names = c("variant_id", "slope", "slope_se", "p_score")),
+        .groups = "drop"
+    ) |>
+    mutate(trait = str_match(file, "allChr_physiological_(.+)\\.assoc\\.txt")[, 2], .before = 1) |>
+    select(-file) |>
+    mutate(z_GWAS = slope / slope_se) |>
+    select(-slope, -slope_se)
+```
+
+## "It would also be interesting to report how many regions with GWAS hits (GWAS p<5e-8) did not have a significant colocalization, to report how much you’re missing."
+
+First looking at the reverse, three groups of colocalizations, on chr1, chr3, and chr7, do not fall within a QTL region, though all are within a few Mb of a QTL region:
+
+```{r}
+overlap <- sig |>
+    separate(variant_id, c("chrom", "pos"), sep = ":", remove = FALSE) |>
+    rowwise() |>
+    mutate(i_qtl = str_c(with(qtls, which(chrom == qtl_chrom &
+                                              pos >= LD_interval_start &
+                                              pos <= LD_interval_stop)),
+                         collapse = ", ")) |>
+    ungroup() |>
+    select(tissue, gene_id, variant_id, trait, i_qtl)
+overlap
+```
+
+Flipping this around, the QTLs without colocalizations are 1:4, 10, 12:14, 16, 19:26, 29:31, 34:41.
+
+```{r}
+with(overlap, unique(unlist(i_qtl)))
+```
+
+## "Report the individual genes somewhere, are these genes plausible linked to the corresponding traits in the literature?"
+
+I think there are too many to list in the main text, but they'll be listed in the supp table. I could check the literature for a few of the genes most frequently involved in colocalizations:
+
+```{r}
+count(sig, gene_id, sort = TRUE) |>
+    left_join(genes, by = "gene_id")
+
+count(sig, gene_id) |>
+    left_join(genes, by = "gene_id") |>
+    filter(n >= 4) |>
+    pull(gene_name) |>
+    sort()
+```
+
+- Pnpo is [pyridoxamine 5'-phosphate oxidase](https://uswest.ensembl.org/Rattus_norvegicus/Gene/Ontologies/biological_process?db=core;g=ENSRNOG00000046493;r=10:81924569-81930871)
+- Rbks (Ribokinase) is involved in [carbohydrate metabolism](https://uswest.ensembl.org/Rattus_norvegicus/Gene/Ontologies/biological_process?db=core;g=ENSRNOG00000004710;r=6:24747293-24824290).
+- Gpn1 is [GPN-loop GTPase 1](https://uswest.ensembl.org/Rattus_norvegicus/Gene/Summary?db=core;g=ENSRNOG00000004941;r=6:24947325-24965031)
+- Mrpl45 is [mitochondrial ribosomal protein L45](https://uswest.ensembl.org/Rattus_norvegicus/Gene/Ontologies/cellular_component?db=core;g=ENSRNOG00000010540;r=10:82308427-82320474).
+- Apip (APAF1 interacting protein) is involved in [apoptosis and methionine synthesis](https://uswest.ensembl.org/Rattus_norvegicus/Gene/Ontologies/biological_process?db=core;g=ENSRNOG00000007446;r=3:89432037-89458340;t=ENSRNOT00000009797)
+- Nudt4 (nudix hydrolase 4) is involved in [phosphatidylinositol metabolic process](https://uswest.ensembl.org/Rattus_norvegicus/Gene/Ontologies/biological_process?db=core;g=ENSRNOG00000009094;r=7:30188100-30204615)
+- Cacul1 is involved in [cell cycle regulation](https://uswest.ensembl.org/Rattus_norvegicus/Gene/Ontologies/biological_process?db=core;g=ENSRNOG00000009954;r=1:259668516-259726082).
+- Drc1 is involved in [cilia](https://uswest.ensembl.org/Rattus_norvegicus/Gene/Ontologies/biological_process?db=core;g=ENSRNOG00000024905;r=6:26025005-26059414).
+
+## "if you have a gene that colocalizes with a trait in one tissue but not in another this could be an interesting example to highlight and then show either the Manhattan plot for just that gene or at least the eQTL effect sizes for that gene across the tissues in a forest plot. The most interesting would be if the gene has a significant eQTL in multiple tissues but only colocalizes in one, which would be evidence of a really tissue-specific effect that’s relevant to the disease."
+
+All eQTLs for all coloc genes, indicating which are involved in a colocalization:
+
+```{r rows.print = 20}
+eqtls |>
+    filter(gene_id %in% sig$gene_id) |>
+    arrange(gene_id) |>
+    rowwise() |>
+    mutate(coloc = any(sig$tissue == tissue & sig$gene_id == gene_id)) |>
+    ungroup()
+```
+
+However, it's hard to draw conclusions from whether the strongest eQTLs for a gene not being in a coloc is interesting, since it could be a matter of chance whether the strong eSNPs were tested in GWAS.
+
+### Example: Rbks
+
+```{r}
+signif <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
+    group_by(tissue) |>
+    summarise(
+        read_tsv(str_glue("../../data/tensorqtl/{str_sub(tissue, 1, 1)}QCT.cis_qtl_signif.txt.gz"),
+                 col_types = "ccidiidddd") |>
+            filter(phenotype_id == "ENSRNOG00000004710"),
+        .groups = "drop"
+    )
+```
+
+```{r}
+tmp1 <- eqtls |>
+    separate(variant_id, c("chrom", "pos"), convert = TRUE) |>
+    filter(gene_id == "ENSRNOG00000004710")
+
+signif |>
+    separate(variant_id, c("chrom", "pos"), convert = TRUE) |>
+    ggplot(aes(x = pos / 1e6, y = -log10(pval_nominal), color = tissue)) +
+    geom_point(size = 1) +
+    geom_vline(aes(xintercept = pos / 1e6, color = tissue), data = tmp1) +
+    scale_color_manual(values = c("#377eb8", "#4daf4a", "#e41a1c", "#ff7f00", "#984ea3")) +
+    ggtitle("eQTLs for ENSRNOG00000004710, lines are top eSNPs")
+```
+
+```{r}
+tmp <- gwas |>
+    filter(trait == "retrofat",
+           str_sub(variant_id, 1, 4) == "chr6") |>
+    separate(variant_id, c("chrom", "pos"), convert = TRUE) |>
+    filter(chrom == "chr6",
+           pos > 25000000,
+           pos < 27050000)
+tmp |>
+    ggplot(aes(x = pos / 1e6, y = -log10(p_score))) +
+    geom_point(size = 1) +
+    ggtitle("Retrofat GWAS p-values in same region")
+```
+
+```{r}
+tmp3 <- gwas |>
+    filter(trait == "retrofat",
+           str_sub(variant_id, 1, 4) == "chr6") |>
+    separate(variant_id, c("chrom", "pos"), convert = TRUE) |>
+    filter(chrom == "chr6",
+           pos > 25000000,
+           pos < 28752109)
+tmp3 |>
+    ggplot(aes(x = pos / 1e6, y = -log10(p_score))) +
+    geom_point(size = 1) +
+    ggtitle("Retrofat GWAS p-values in a larger region")
+```
+
+Those eQTLs are actually outside the QTL region.
+
+## OFC on chr1
+
+```{r}
+sig |>
+    separate(variant_id, c("chrom", "pos"), sep = ":", remove = FALSE) |>
+    filter(tissue == "OFC",
+           chrom == "chr1")
+```
+
+```{r}
+smr |>
+    filter(chrom == 1,
+           pos > 277000000,
+           pos < 282000000) |>
+    ggplot(aes(x = pos / 1e6, y = -log10(p_SMR), color = trait, shape = tissue)) +
+    geom_point()
+```
+
+```{r}
+top_assoc <- read_tsv("../../data/eqtls/top_assoc.txt", col_types = "ccciiciiccdddddddd")
+top_assoc |>
+    filter(chrom == 1,
+           pos > 200000000) |>
+    ggplot(aes(x = pos / 1e6, y = -log10(pval_nominal), color = tissue)) +
+    geom_vline(xintercept = c(277.555422, 280.980284, 281.420356)) +
+    geom_line(alpha = 1) +
+    theme_bw() +
+    ggtitle("Top eSNPs on end of chr1")
+top_assoc |>
+    filter(chrom == 1,
+           pos > 274000000) |>
+    ggplot(aes(x = pos / 1e6, y = -log10(pval_nominal), color = tissue)) +
+    geom_vline(xintercept = c(277.555422, 280.980284, 281.420356)) +
+    geom_line(alpha = 1) +
+    theme_bw() +
+    ggtitle("Zoomed in on colocs")
+```
+
+GWAS for the same area for comparison:
+
+```{r}
+tmp <- gwas |>
+    filter(str_sub(variant_id, 1, 5) == "chr1:") |>
+    separate(variant_id, c("chrom", "pos"), sep = ":", remove = FALSE, convert = TRUE) |>
+    filter(pos > 200000000)
+tmp |>
+    ggplot(aes(x = pos / 1e6, y = -log10(p_score), color = trait)) +
+    geom_vline(xintercept = c(277.555422, 280.980284, 281.420356)) +
+    geom_point(size = 0.5, alpha = 1) +
+    theme_bw() +
+    ggtitle("GWAS results on end of chr1")
+tmp |>
+    filter(pos > 274000000) |>
+    ggplot(aes(x = pos / 1e6, y = -log10(p_score), color = trait)) +
+    geom_vline(xintercept = c(277.555422, 280.980284, 281.420356)) +
+    geom_point(size = 0.5, alpha = 1) +
+    theme_bw() +
+    ggtitle("Zoomed in on colocs")
+```
+
+All significant OFC eSNPs in the area compared to GWAS:
+
+```{r}
+signif <- read_tsv("../../data/tensorqtl/OQCT.cis_qtl_signif.txt.gz",
+                   col_types = "cc----ddd-") |>
+    filter(str_sub(variant_id, 1, 5) == "chr1:") |>
+    separate(variant_id, c("chrom", "pos"), sep = ":", remove = FALSE, convert = TRUE) |>
+    filter(pos > 274000000) |>
+    rename(gene_id = phenotype_id)
+p1 <- signif |>
+    ggplot(aes(x = pos / 1e6, y = -log10(pval_nominal), color = gene_id)) +
+    geom_vline(xintercept = c(277.555422, 280.980284, 281.420356)) +
+    geom_point(size = 0.5, alpha = 1) +
+    theme_bw() +
+    ggtitle("OFC significant eSNPs near colocs")
+p2 <- tmp |>
+    filter(pos > 274000000) |>
+    ggplot(aes(x = pos / 1e6, y = -log10(p_score), color = trait)) +
+    geom_vline(xintercept = c(277.555422, 280.980284, 281.420356)) +
+    geom_point(size = 0.5, alpha = 1) +
+    theme_bw() +
+    ggtitle("GWAS near colocs")
+p1 / p2
+```
+

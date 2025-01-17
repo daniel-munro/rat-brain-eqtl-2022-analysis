@@ -1,0 +1,79 @@
+---
+title: "Haplotype simulation"
+author: "Daniel Munro"
+date: "6/15/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+```
+
+```{r}
+next_generation <- function(genos) {
+    genos %>%
+        mutate(father = c(male[2:length(male)], male[1])) %>%
+        select(cage, mother = female, father) %>%
+        rowwise() %>%
+        mutate(female = list(c(sample(mother, 1), sample(father, 1))),
+               male = list(c(sample(mother, 1), sample(father, 1)))) %>%
+        ungroup() %>%
+        select(cage, female, male)
+}
+
+geno_sim <- function(pairs = 50, generations = 90) {
+    genos1 <- tibble(cage = 1:pairs) %>%
+        group_by(cage) %>%
+        mutate(female = list(sample(LETTERS[1:8], 2, replace = TRUE)),
+               male = list(sample(LETTERS[1:8], 2, replace = TRUE))) %>%
+        ungroup()
+    genos <- list(genos1)
+    for (gen in 2:generations) {
+        genos <- c(genos, list(next_generation(genos[[length(genos)]])))
+    }
+    bind_rows(genos, .id = "generation") %>%
+        mutate(generation = as.integer(generation))
+}
+
+genos <- tibble(permutation = 1:200) %>%
+    group_by(permutation) %>%
+    summarise(geno_sim(generations = 300), .groups = "drop")
+
+counts <- genos %>%
+    group_by(permutation, generation) %>%
+    summarise({
+        tibble(strain = c(unlist(female), unlist(male))) %>%
+            count(strain)
+    }, .groups = "drop")
+
+# write_tsv(counts, "hap_proportions/breeding_sim.tsv")
+```
+
+```{r fig.width = 8, fig.height = 6}
+counts %>%
+    filter(permutation <= 9) %>%
+    ggplot(aes(x = generation, y = n, fill = strain)) +
+    facet_wrap(~ permutation, ncol = 3) +
+    scale_fill_brewer(type = "qual", palette = 6) +
+    geom_col(width = 1) +
+    ggtitle("Simulation of single loci with 64 breeder pairs")
+```
+
+```{r fig.width = 8, fig.height = 6}
+counts %>%
+    filter(generation == 90,
+           permutation <= 56) %>%
+    ggplot(aes(x = "", y = n, fill = strain)) +
+    facet_wrap(~ permutation) +
+    scale_fill_brewer(type = "qual", palette = 6) +
+    geom_col(width = 1) +
+    coord_polar("y") +
+    theme_minimal() +
+    theme(axis.text.x = element_blank(),
+          strip.text = element_blank()) +
+    xlab(NULL) +
+    ggtitle("Distributions for single loci after 90 generations")
+```
+

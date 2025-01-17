@@ -1,0 +1,212 @@
+---
+title: "Checking for sample mixups"
+output:
+  html_document:
+    df_print: paged
+  html_notebook:
+    code_folding: hide
+    df_print: paged
+---
+
+I used ASEReadCounter to get RNA-Seq read counts for a random selection of 50 SNPs that have total counts >= 10 in almost all samples, and estimate genotypes as alt allele fractions. Then compare each of these to all VCF genotypes (also as alt allele fractions, i.e. 0, 0.5, or 1), measuring similarity as mean(1 - abs(bam_vaf - vcf_vaf)) across the 50 SNPs.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+```
+
+```{r}
+counts <- read_tsv("../../data/mixups/test_snps.counts.txt.gz", col_types = "ccii")
+
+n_samples <- n_distinct(counts$sample_id)
+bam <- counts %>%
+    group_by(variant_id) %>%
+    filter(n() >= n_samples - 1) %>%
+    ungroup() %>%
+    # mutate(
+    #     bam_geno = case_when(
+    #         alt_count <= 1                ~ 0L,
+    #         alt_count > 1 & ref_count > 1 ~ 1L,
+    #         ref_count <= 1                ~ 2L
+    #     )
+    # ) %>%
+    mutate(bam_geno = alt_count / (ref_count + alt_count)) %>%
+    select(-ref_count, -alt_count)
+set.seed(569273)
+bam <- bam %>%
+    filter(variant_id %in% sample(unique(bam$variant_id), 50, replace = FALSE))
+
+vcf <- read_tsv("../../data/mixups/test_snps.vcf.gz", comment = "##",
+                col_types = cols(.default = "c")) %>%
+    select(-`#CHROM`, -POS, -(REF:FORMAT)) %>%
+    rename(variant_id = ID) %>%
+    filter(variant_id %in% bam$variant_id) %>%
+    pivot_longer(-variant_id, names_to = "vcf_id", values_to = "vcf_geno") %>%
+    mutate(
+        # vcf_geno = case_when(
+        #     vcf_geno == "0|0" ~ 0L,
+        #     vcf_geno == "0|1" ~ 1L,
+        #     vcf_geno == "1|0" ~ 1L,
+        #     vcf_geno == "1|1" ~ 2L
+        # )
+        vcf_geno = case_when(
+            vcf_geno == "0|0" ~ 0,
+            vcf_geno == "0|1" ~ 0.5,
+            vcf_geno == "1|0" ~ 0.5,
+            vcf_geno == "1|1" ~ 1
+        )
+    )
+```
+
+```{r}
+matches <- bam %>%
+    left_join(vcf, by = "variant_id") %>%
+    group_by(sample_id, vcf_id) %>%
+    summarise(similarity = mean(1 - abs(bam_geno - vcf_geno)),
+              .groups = "drop")
+```
+
+```{r}
+# matches %>%
+#     ggplot(aes(x = vcf_id, y = sample_id, fill = similarity)) +
+#     geom_tile() +
+#     scale_fill_viridis_c()
+```
+
+For each sample there is either one VCF genotype with a high match, or no high matches. Note that the main reason the high matches are not exactly 100% is that het genotypes don't give exactly equal ref/alt counts. Each sample has one teal point which is the VCF genotype with the same rat ID as the BAM file, and is usually, but not always, the genotype match:
+
+```{r fig.width=12, fig.height=9}
+matches %>%
+    separate(sample_id, c("bam_id", "tissue")) %>%
+    mutate(same_id = bam_id == vcf_id) %>%
+    ggplot(aes(x = bam_id, y = similarity, color = same_id)) +
+    # facet_wrap(~ tissue) +
+    facet_grid(rows = "tissue") +
+    ggbeeswarm::geom_beeswarm(groupOnX = TRUE, cex = 0.3, size = 0.25, ) +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90)) +
+    ylab("Similarity of RNA-Seq & VCF genotypes of 88 rats")
+
+# ggsave("frac_snps_match.png", width = 12, height = 12)
+```
+
+```{r}
+# # Plot per tissue for presentation
+# tiss <- "VoLo"
+# matches %>%
+#     separate(sample_id, c("bam_id", "tissue")) %>%
+#     filter(tissue == tiss) %>%
+#     mutate(same_id = bam_id == vcf_id) %>%
+#     ggplot(aes(x = bam_id, y = similarity, color = same_id)) +
+#     ggbeeswarm::geom_beeswarm(groupOnX = TRUE, cex = 0.3, size = 0.25, ) +
+#     theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90),
+#           legend.position = "top") +
+#     ylab("RNA-Seq/GBS genotype similarity") +
+#     ggtitle(tiss)
+# ggsave(str_glue("frac_snps_match.{tiss}.png"), width = 10, height = 4)
+```
+
+Mismatched samples whose correct ID has been found among the 88:
+
+```{r}
+mismatches <- matches %>%
+    separate(sample_id, c("bam_id", "tissue"), remove = FALSE) %>%
+    mutate(same_id = bam_id == vcf_id) %>%
+    select(-bam_id) %>%
+    group_by(sample_id, tissue) %>%
+    slice_max(similarity) %>%
+    ungroup() %>%
+    arrange(tissue) %>%
+    filter(!same_id,
+           similarity > 0.9) %>% # Based on inspecting plot
+    select(-same_id)
+mismatches
+```
+
+Mismatched samples whose correct ID is not among the 88. These VCF IDs aren't correct matches, just those with the highest, but still too low, similarity:
+
+```{r}
+unsolved <- matches %>%
+    separate(sample_id, c("bam_id", "tissue"), remove = FALSE) %>%
+    mutate(same_id = bam_id == vcf_id) %>%
+    select(-bam_id) %>%
+    group_by(sample_id, tissue) %>%
+    slice_max(similarity) %>%
+    ungroup() %>%
+    filter(similarity < 0.89) %>% # Based on inspecting plot
+    arrange(tissue) %>%
+    select(-same_id)
+unsolved
+```
+
+## Try to resolve remaining mismatches
+
+```{r}
+# write_lines(unique(vcf$variant_id), "50_test_snps.txt")
+# I sent this to pejlab:~/data/mixups/, and got a VCF with these SNPs for all 6000+ rats.
+vcf_all <- read_tsv("../../data/mixups/all_rats_50_test_snps.vcf.gz",
+                    comment = "##", col_types = cols(.default = "c")) %>%
+    select(-`#CHROM`, -POS, -(REF:FORMAT)) %>%
+    rename(variant_id = ID) %>%
+    pivot_longer(-variant_id, names_to = "vcf_id", values_to = "vcf_geno") %>%
+    mutate(
+        vcf_geno = case_when(
+            vcf_geno == "0/0" ~ 0,
+            vcf_geno == "0/1" ~ 0.5,
+            vcf_geno == "1/0" ~ 0.5,
+            vcf_geno == "1/1" ~ 1
+        )
+    ) %>%
+    filter(!is.na(vcf_geno))
+
+matches_all <- bam %>%
+    filter(sample_id %in% unsolved$sample_id) %>%
+    left_join(vcf_all, by = "variant_id") %>%
+    group_by(sample_id, vcf_id) %>%
+    summarise(similarity = mean(1 - abs(bam_geno - vcf_geno)),
+        # similarity = mean(bam_geno == vcf_geno),
+              .groups = "drop")
+```
+
+I did the same comparison for the same 50 SNPs for all 6147 rats (only showing similarity > 0.7 here):
+
+```{r}
+matches_all %>%
+    filter(similarity > 0.69) %>%
+    ggplot(aes(x = sample_id, y = similarity)) +
+    ggbeeswarm::geom_beeswarm(groupOnX = TRUE, cex = 0.3, size = 0.25, ) +
+    coord_cartesian(ylim = c(0.71, 1)) +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90)) +
+    ylab("BAM / VCF similarity")
+```
+
+Nothing looks conclusive, especially given how many rats were tested. We'll consider the correct rat IDs unknown for these samples.
+
+<!-- These three are higher than the rest, but nothing looks conclusive (and it could just be that these two rats are especially related): -->
+
+```{r}
+# matches_all %>%
+#     filter(similarity > 0.88)
+```
+
+## Conclusion
+
+In summary, we will swap the rat IDs between these two samples and keep in the data:
+
+```{r}
+mismatches %>%
+    filter(sample_id %in% c("000789FFF0_LHB", "000789FFF9_LHB")) %>%
+    select(sample_id)
+```
+
+And remove these 11 samples for which either the correct sample ID is already present in the data, or the correct rat ID is unknown:
+
+```{r rows.print=20}
+bind_rows(
+    mismatches %>%
+        filter(!(sample_id %in% c("000789FFF0_LHB", "000789FFF9_LHB"))),
+    unsolved
+) %>%
+    arrange(tissue, sample_id) %>%
+    select(sample_id)
+```
+

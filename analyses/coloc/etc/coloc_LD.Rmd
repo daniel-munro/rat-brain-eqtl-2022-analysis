@@ -1,0 +1,103 @@
+---
+title: "Colocalization"
+output: 
+  html_notebook: 
+    code_folding: hide
+---
+
+Apurva computed LD between each eQTL's top SNP and each QTL top SNP from the Obesity 2020 paper. Here are the results with minimum LD 0.6.
+
+```{r}
+library(tidyverse)
+
+d <- read_csv("brain_eQTL_adiposity_results_annotated.csv",
+              col_types = "ccdccciiciccddddddddcccccicc") |>
+    filter(!is.na(eqtl_topsnp)) |>
+    separate(trait_topsnp, c("chrom_trait", "pos_trait"), convert = TRUE, remove = FALSE) |>
+    mutate(tissue = c(IL = "IL", LHB = "LHb", Acbc = "NAcc", VoLo = "OFC", PL = "PL")[tissue],
+           QTL = str_glue("{trait}, {trait_topsnp}"))
+```
+
+Number of colocalized eQTLs per trait (can include multiple QTLs per trait and multiple brain regions per eQTL):
+
+```{r}
+count(d, trait, sort = TRUE)
+```
+
+Counts for specific QTLs:
+
+```{r}
+count(d, trait, trait_topsnp, sort = TRUE)
+```
+
+Colocalizations per tissue:
+
+```{r}
+count(d, tissue)
+```
+
+Plot one panel per GWAS locus, locuszoom with all associated eQTL top SNPs. Since top SNPs for the same eQTL in different tissues are redundant (and differences in position are likely arbitrary), I'll take the top p-value across tissues per gene.
+
+```{r fig.width = 7, fig.height = 12}
+tmp <- d |>
+    group_by(ensembl_gene, trait) |>
+    slice_min(pval_beta, n = 1) |>
+    ungroup()
+    # filter(trait == "RetroFat")
+
+trait_pos <- tmp |>
+    group_by(QTL) |>
+    summarise(pos_trait = unique(pos_trait) / 1e6,
+              .groups = "drop")
+
+max_dist <- with(tmp, max(abs(pos - pos_trait) / 1e6))
+ranges <- trait_pos |>
+    group_by(QTL) |>
+    summarise(pos = c(pos_trait + max_dist, pos_trait - max_dist), .groups = "drop") |>
+    mutate(pval_beta = 1, rsquare = 1)
+
+tmp |>
+    mutate(pos = pos / 1e6) |>
+    ggplot(aes(x = pos, y = -log10(pval_beta), color = rsquare)) +
+    facet_wrap(~ QTL, scales = "free_x", ncol = 3) +
+    geom_point() +
+    scale_color_viridis_c(direction = -1, option = "C", begin = 0.4, end = 0.9) +
+    # scale_color_gradient(low = "#aaaaff", high = "#0000ff") +
+    geom_vline(aes(xintercept = pos_trait), data = trait_pos, color = "blue") +
+    geom_blank(data = ranges) +
+    theme_bw() +
+    xlab("Position (Mb)") +
+    ylab(expression(-log[10]*P))
+```
+
+The genes tend to be close to the QTL, which could indicate a causal connection, but it would also make sense just given the LD cutoff:
+
+```{r}
+tmp |>
+    mutate(distance = (pos - pos_trait) / 1e6) |>
+    ggplot(aes(x = distance)) +
+    geom_histogram(bins = 30, boundary = 0) +
+    geom_vline(xintercept = 0, color = "blue")
+```
+
+Does taking the top p-value per gene remove independent eQTLs? Doesn't look like it, but note that some eQTLs associate with the same locus for different traits.
+
+```{r}
+d |>
+    count(ensembl_gene, tissue, trait) |>
+    # count(n)
+    filter(n > 1)
+```
+
+Interpret the colocalizations with rsquared 1.
+
+```{r}
+top <- d |>
+    filter(rsquare == 1)
+
+top |>
+    distinct(QTL, ensembl_gene, gene_name, gene_long_name) |>
+    arrange(QTL) |>
+    print.data.frame()
+```
+

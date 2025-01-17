@@ -1,0 +1,102 @@
+---
+title: "VEP annotations"
+author: "Daniel Munro"
+date: "8/24/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+```
+
+```{r}
+vep <- read_tsv("../data/vep.txt.gz", comment = "##", na = "-",
+                col_types = "cc-c-cc------c") %>%
+    select(variant_id = `#Uploaded_variation`,
+           vep_gene_id = Gene,
+           Feature_type,
+           Consequence) %>%
+    distinct(variant_id,
+             vep_gene_id,
+             Feature_type,
+             Consequence)
+
+codes <- read_tsv("../methods.txt", col_types = "cccccc") %>%
+    mutate(covar = fct_rev(covar))
+eqtls_all <- read_tsv("../data/eqtls.txt", col_types = "ccciidddd")
+eqtls <- eqtls_all %>%
+    filter(qval < 0.05) %>%
+    left_join(codes, by = "code") %>%
+    left_join(vep, by = "variant_id")
+# Just look at one set of results:
+eqtls <- eqtls %>%
+    filter(code == "AQCT")
+```
+
+For VEP annotations associated with a gene, most are not the eGene:
+
+```{r fig.height = 2.5}
+# with(eqtls, table(gene_id == vep_gene_id))
+eqtls %>%
+    mutate(
+        VEP_gene = case_when(
+            gene_id == vep_gene_id ~ "same",
+            gene_id != vep_gene_id ~ "different",
+            TRUE ~ "none"
+        ),
+        # Consequence = fct_lump_lowfreq(Consequence) %>%
+        #     fct_rev()
+        Consequence = fct_rev(Consequence)
+    ) %>%
+    ggplot(aes(x = Consequence, fill = VEP_gene)) +
+    geom_bar() +
+    coord_flip()
+    # count(Feature_type, Consequence, VEP_gene)
+    # 
+    # group_by(Feature_type, Consequence) %>%
+    # summarise(frac_same_gene = mean(gene_id == vep_gene_id, na.rm = TRUE),
+    #           .groups = "drop")
+```
+
+Note that some variants have multiple annotations relating to different genes, and all are included above. But the same is true when excluding multiple-annotation variants:
+
+```{r fig.height = 2.5}
+eqtls %>%
+    group_by(gene_id) %>%
+    filter(n() == 1) %>%
+    ungroup() %>%
+    mutate(
+        VEP_gene = case_when(
+            gene_id == vep_gene_id ~ "same",
+            gene_id != vep_gene_id ~ "different",
+            TRUE ~ "none"
+        ),
+        # Consequence = fct_lump_lowfreq(Consequence) %>%
+        #     fct_rev()
+        Consequence = fct_rev(Consequence)
+    ) %>%
+    ggplot(aes(x = Consequence, fill = VEP_gene)) +
+    geom_bar() +
+    coord_flip()
+```
+
+Upstream/downstream seems to refer to several kb away (also see sequence ontology description at https://uswest.ensembl.org/info/genome/variation/prediction/predicted_data.html).
+
+For comparison, annotations for all variants in population VCF (including multiple annotations per variant if present):
+
+```{r fig.height = 1.75}
+# with(eqtls, table(gene_id == vep_gene_id))
+vep %>%
+    mutate(Consequence = fct_lump_min(Consequence, 1e4) %>%
+               fct_rev()) %>%
+    ggplot(aes(x = Consequence)) +
+    geom_bar() +
+    coord_flip()
+    # count(Feature_type, Consequence, VEP_gene)
+    # 
+    # group_by(Feature_type, Consequence) %>%
+    # summarise(frac_same_gene = mean(gene_id == vep_gene_id, na.rm = TRUE),
+    #           .groups = "drop")
+```

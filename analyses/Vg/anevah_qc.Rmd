@@ -1,0 +1,156 @@
+---
+title: "anevah QC"
+output: html_notebook
+---
+
+I'm comparing Vg values with the anevah input ASE counts to see the relationship.
+
+These are total ref + alt counts across samples.
+
+```{r}
+library(tidyverse)
+library(patchwork)
+
+ase <- crossing(tissue = c("IL", "LHb", "NAcc", "OFC", "PL"),
+                allele = c("ref", "alt")) |>
+    group_by(tissue, allele) |>
+    summarise(
+        read.delim(
+            str_glue("../../../data/anevah/anevah_{tissue}_{allele}_counts.tsv"),
+            header = TRUE,
+            row.names = 1,
+            as.is = TRUE,
+        ) |>
+            as_tibble(rownames = "gene_id") |>
+            pivot_longer(-gene_id, names_to = "sample", values_to = "count"),
+        .groups = "drop"
+    ) |>
+    pivot_wider(id_cols = c(tissue, gene_id, sample), names_from = allele, values_from = count)
+
+vg <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
+    group_by(tissue) |>
+    summarise(
+        read_tsv(str_glue("../../../analysis/Vg/anevah/Vg.{tissue}.tsv.gz"), col_types = "cd"),
+        .groups = "drop"
+    ) |>
+    rename(gene_id = GENE_ID)
+
+df <- ase |>
+    group_by(tissue, gene_id) |>
+    summarise(meanlogfc = mean(log2(ref / alt), na.rm = TRUE),
+              counts = sum(ref + alt),
+              .groups = "drop") |>
+    left_join(vg, by = c("tissue", "gene_id"))
+```
+
+```{r}
+df |>
+    ggplot(aes(x = is.na(Vg), y = counts)) +
+    geom_boxplot() +
+    scale_y_log10()
+```
+
+```{r}
+df |>
+    filter(!is.na(Vg)) |>
+    ggplot(aes(x = counts, y = sqrt(Vg))) +
+    geom_point(size = 0.5, alpha = 0.5) +
+    scale_x_log10() +
+    stat_smooth() +
+    xlab("Sum of Ref + Alt counts across all samples for each gene")
+```
+
+```{r}
+df |>
+    filter(!is.na(Vg),
+           Vg < 1e-3) |>
+    ggplot(aes(x = counts)) +
+    geom_histogram(bins = 100) +
+    ggtitle("Counts for only genes with Vg ~0")
+```
+
+```{r}
+df |>
+    filter(!is.na(Vg)) |>
+    mutate(Vg_not_0 = Vg > 1e-3) |>
+    ggplot(aes(x = Vg_not_0, y = counts)) +
+    geom_boxplot() +
+    scale_y_log10()
+```
+
+## Ref/Alt ratio
+
+```{r}
+df |>
+    filter(is.finite(meanlogfc)) |>
+    ggplot(aes(x = meanlogfc)) +
+    geom_histogram(bins = 100)
+```
+
+```{r fig.width = 4, fig.height = 4.5}
+ex_genes_low_Vg <- df |>
+    filter(tissue == "IL",
+           counts > 3000,
+           Vg < 1e-4) |>
+    arrange(desc(counts)) |>
+    slice(1:8)
+
+ex_genes_high_Vg <- df |>
+    filter(tissue == "IL",
+           counts > 3000,
+           Vg > 0.03) |>
+    arrange(desc(counts)) |>
+    slice(1:8)
+
+p1 <- ase |>
+    filter(gene_id %in% ex_genes_low_Vg$gene_id) |>
+    ggplot(aes(x = ref, y = alt)) +
+    facet_wrap(~gene_id, nrow = 2) +
+    geom_abline(slope = 1, intercept = 0, color = "gray") +
+    geom_point(size = 0.5, alpha = 0.5) +
+    expand_limits(x = 500, y = 500) +
+    coord_fixed() +
+    xlab("Copy 1") +
+    ylab("Copy 2") +
+    ggtitle("Some genes with high counts and LOW Vg (<0.0001)")
+p2 <- ase |>
+    filter(gene_id %in% ex_genes_high_Vg$gene_id) |>
+    ggplot(aes(x = ref, y = alt)) +
+    facet_wrap(~gene_id, nrow = 2) +
+    geom_abline(slope = 1, intercept = 0, color = "gray") +
+    geom_point(size = 0.5, alpha = 0.5) +
+    expand_limits(x = 500, y = 500) +
+    coord_fixed() +
+    xlab("Copy 1") +
+    ylab("Copy 2") +
+    ggtitle("Some genes with high counts and HIGH Vg (>0.03)")
+p1 / p2
+```
+
+
+## GTEx
+
+```{r}
+kept_gtex <- read_csv("../../../data/anevah/Vg_estimates_phaser_tuned.csv",
+                      col_types = cols(.default = "c")) |>
+    pivot_longer(everything(), names_to = "tissue", values_to = "GENE_ID") |>
+    filter(!is.na(GENE_ID))
+
+vg_gtex <- list.files("../../../data/anevah/gtex", pattern = "*.txt", recursive = TRUE,
+                      full.names = TRUE) |>
+    read_tsv(col_types = "cd-", id = "path") |>
+    mutate(tissue = str_match(path, "gtex/(\\w+)/Common")[, 2], .after = path) |>
+    filter(str_sub(tissue, 1, 3) == "BRN") |>
+    select(-path) |>
+    rename(Vg = Vg_GeneWise) |>
+    filter(!is.na(Vg)) |>
+    left_join(mutate(kept, kept = TRUE), by = c("tissue", "GENE_ID")) |>
+    replace_na(list(kept = FALSE))
+```
+
+```{r}
+vg_gtex |>
+    ggplot(aes(x = kept, y = sqrt(Vg))) +
+    geom_boxplot()
+```
+

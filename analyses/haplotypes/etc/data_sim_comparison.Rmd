@@ -1,0 +1,216 @@
+---
+title: "Data and simulation comparison"
+author: "Daniel Munro"
+date: "6/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+```
+
+```{r}
+probs <- function(prob, n_SNPs = NULL) {
+    names(dimnames(prob)) <- c("individual", "strain", "locus")
+    if (!is.null(n_SNPs)) {
+        SNP_reps <- round(seq(from = 1, to = dim(prob)[3], length.out = n_SNPs))
+        prob <- prob[, , SNP_reps]
+    }
+    cubelyr::as.tbl_cube(prob) %>%
+        as_tibble()
+}
+```
+
+```{r}
+breeding_sim <- read_tsv("hap_proportions/breeding_sim.tsv",
+                         col_types = "iici") %>%
+    rename(locus = permutation)
+
+simple_sim <- read_tsv("hap_proportions/simple_sim.tsv",
+                       col_types = "iici") %>%
+    rename(locus = permutation)
+
+multinom_sim <- read_tsv("hap_proportions/multinom_sim.tsv",
+                         col_types = "iici") %>%
+    rename(locus = permutation)
+
+chrom_lengths <- c(
+    282763074, 266435125, 177699992, 184226339, 173707219,
+    147991367, 145729302, 133307652, 122095297, 112626471,
+    90463843, 52716770, 114033958, 115493446, 111246239,
+    90668790, 90843779, 88201929, 62275575, 56205956
+)
+
+chr_reps <- sapply(
+    seq(from = 1, to = sum(chrom_lengths), length.out = 200),
+    function(x) sum(cumsum(chrom_lengths) < x) + 1
+)
+d <- tibble(chrom = 1:20) %>%
+    group_by(chrom) %>%
+    summarise(
+        readRDS(str_c("haplotype_probs/haplotype_probs_chr", chrom, ".rds")) %>%
+            probs(n_SNPs = sum(chr_reps == chrom)),
+        .groups = "drop"
+    ) %>%
+    group_by(locus, strain) %>%
+    summarise(prob = sum(prob), .groups = "drop") %>%
+    mutate(locus = as.integer(fct_shuffle(locus)))
+```
+
+To see if the distributions of founder haplotype probabilities produced by R/qtl2 align with expectations for an HS population, I will compare them to simulated haplotype proportions. For all simulations, I approximate breeding population as 50 breeding pairs = 200 allele copies. I will try three types of single-locus simulations, from most to least accurate:
+
+1. **Breeding simulation**: This essentially replicates HS breeding without any selective pressure, though with a constant number of breeding pairs. Start with C = 50 cages each with 1 female and 1 male, each individual having two allele copies randomly chosen from A through H. For the next generation, generate 50 new pairs: for both the new female and new male in cage c, randomly choose one allele from the previous female in cage c and another allele from the previous male in cage c+1 (or 1 if c == 50). Repeat for the next generation.
+
+2. **Simple simulation**: This is a simplified version that does not do the circular breeding scheme, or even properly model diploid organisms. It just randomly pairs up alleles and samples from the pair twice, with replacement, to provide two alleles to the next generation. So it just approximates the basic cause of genetic drift in this population, which is that for every generation, ~50% of allele copies are transfered to the next generation one-for-one, ~25% of allele copies are duplicated, and ~25% are not passed on.
+
+3. **Multinomial simulation**: The 8 haplotype counts in a generation are a sample from a multinomial distribution with k = 8 categories and n = 200 allele copies. For generation 1 the starting probabilities are all 1/8, and in subsequent generations the probabilities are the proportions in the previous generation. This intuitively captures the basic idea of genetic drift, but is inaccurate because instead of each allele copy being passed on 0, 1, or 2 times, it could in theory contribute to any proportion of the next generation, leading to wilder drift.
+
+### Breeding simulation: single loci over 90 generations
+
+```{r fig.width = 8, fig.height = 6}
+breeding_sim %>%
+    filter(locus <= 9,
+           generation <= 90) %>%
+    ggplot(aes(x = generation, y = n, fill = strain)) +
+    facet_wrap(~ locus, ncol = 3) +
+    scale_fill_brewer(type = "qual", palette = 6) +
+    geom_col(width = 1)
+```
+
+### Simple simulation: single loci over 90 generations
+
+```{r fig.width = 8, fig.height = 6}
+simple_sim %>%
+    filter(locus <= 9,
+           generation <= 90) %>%
+    ggplot(aes(x = generation, y = n, fill = strain)) +
+    facet_wrap(~ locus, ncol = 3) +
+    scale_fill_brewer(type = "qual", palette = 6) +
+    geom_col(width = 1)
+```
+
+### Multinomial simulation: single loci over 90 generations
+
+```{r fig.width = 8, fig.height = 6}
+multinom_sim %>%
+    filter(locus <= 9,
+           generation <= 90) %>%
+    ggplot(aes(x = generation, y = n, fill = strain)) +
+    facet_wrap(~ locus, ncol = 3) +
+    scale_fill_brewer(type = "qual", palette = 6) +
+    geom_col(width = 1)
+```
+
+### Measuring drift with Shannon entropy
+
+I will measure diversity of allele origin at each locus at each generation using Shannon entropy:
+
+$$-\sum_{n=1}^8p_n log_2p_n$$
+
+where $p_n$ is the proportion of alleles descended from strain $n$. So the entropy is 3 when all haplotypes are in equal proportion, 2 when 4 haplotypes are in equal proportion, 1 when 2 haplotypes are in equal proportion, and 0 when only 1 haplotype remains.
+
+The entropy distribution across 200 independent loci (i.e. from repeating the simulation 200 times) drops steadily over generations, but at different rates depending on the simulation type:
+
+```{r}
+counts <- bind_rows(
+    d %>%
+        mutate(data = "qtl2 probabilities",
+               generation = 90) %>%
+        rename(n = prob),
+    breeding_sim %>% mutate(data = "breeding sim"),
+    simple_sim %>% mutate(data = "simple sim"),
+    multinom_sim %>% mutate(data = "multinomial sim")
+) %>%
+    mutate(data = fct_inorder(data)) %>%
+    group_by(data, locus, generation) %>%
+    mutate(fraction = n / sum(n)) %>%
+    ungroup()
+
+entropies <- counts %>%
+    group_by(data, locus, generation) %>%
+    summarise(entropy = entropy::entropy.empirical(n, unit = "log2"),
+              .groups = "drop")
+
+entropies %>%
+    filter(data != "qtl2 probabilities") %>%
+    ggplot(aes(x = generation, y = entropy, color = data, fill = data)) +
+    geom_smooth(
+        stat = "summary",
+        fun.data = function(yval) tibble(ymin = quantile(yval, 0.05),
+                                         y = median(yval),
+                                         ymax = quantile(yval, 0.95))
+    ) +
+    geom_vline(xintercept = 90) +
+    expand_limits(y = 0) +
+    theme_minimal() +
+    ylab("Shannon entropy (base 2)") +
+    ggtitle("Entropy of allele counts in each generation",
+            subtitle = "Lines are medians across loci, ribbons are 5% to 95% quantile ranges")
+```
+
+Just looking at the distributions at generation 90, we can compare them to the actual entropy distributions for the qtl2 haplotype probabilities, averaged over the 88 rats, for 200 roughly equally spaced loci. The entropies for qtl2 probabilities match those from the most realistic simulation quite well:
+
+```{r}
+entropies %>%
+    filter(generation == 90) %>%
+    ggplot(aes(x = entropy, fill = data)) +
+    geom_density(alpha = 0.5) +
+    geom_vline(data = entropies %>%
+                   filter(generation == 90) %>%
+                   group_by(data) %>%
+                   summarise(mean_ent = mean(entropy), .groups = "drop"),
+               aes(xintercept = mean_ent, color = data)) +
+    ggtitle("Entropy of 200 real loci vs. simulated loci at gen 90",
+            subtitle = "Lines are the means")
+```
+
+Same data as boxplots:
+
+```{r fig.width = 4, fig.height = 3}
+entropies %>%
+    filter(generation == 90) %>%
+    ggplot(aes(x = data, y = entropy)) +
+    geom_boxplot()
+```
+
+The wider distribution of qtl2 probabilities compared to the breeding simulation could be due to some loci being affected by selective pressure.
+
+Here are the proportions of qtl2 probabilities for 48 random loci, and the same for breeding simulation allele proportions at generation 90:
+
+```{r fig.width = 8, fig.height = 6}
+counts %>%
+    filter(data == "qtl2 probabilities",
+           generation == 90,
+           locus <= 48) %>%
+    ggplot(aes(x = "", y = fraction, fill = strain)) +
+    facet_wrap(~ locus, ncol = 8) +
+    scale_fill_brewer(type = "qual", palette = 6) +
+    geom_col(width = 1) +
+    coord_polar("y") +
+    theme_minimal() +
+    theme(axis.text.x = element_blank(),
+          strip.text = element_blank()) +
+    xlab(NULL) +
+    ylab(NULL) +
+    ggtitle("qtl2 probabilities",
+            subtitle = "Probabilities for single loci averaged over population")
+
+counts %>%
+    filter(data == "breeding sim",
+           generation == 90,
+           locus <= 48) %>%
+    ggplot(aes(x = "", y = fraction, fill = strain)) +
+    facet_wrap(~ locus, ncol = 8) +
+    scale_fill_brewer(type = "qual", palette = 6) +
+    geom_col(width = 1) +
+    coord_polar("y") +
+    theme_minimal() +
+    theme(axis.text.x = element_blank(),
+          strip.text = element_blank()) +
+    xlab(NULL) +
+    ylab(NULL) +
+    ggtitle("breeding simulation",
+            subtitle = "Distributions for single loci after 90 generations")
+```

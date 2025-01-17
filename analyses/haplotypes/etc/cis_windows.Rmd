@@ -1,0 +1,87 @@
+---
+title: "Genotypes and cis-windows"
+author: "Daniel Munro"
+date: "7/6/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+```
+
+```{r}
+expr <- read_tsv("main.expression.bed.gz", col_types = cols(
+    `#chr` = "i", start = "i", gene_id = "c", .default = "-"
+)) %>%
+    rename(chr = `#chr`) %>%
+    mutate(gene_id = fct_inorder(gene_id))
+
+geno <- read_csv("geno.csv", col_types = cols(.default = "c")) %>%
+    mutate(id = str_replace(id, "chr", "")) %>%
+    separate(id, c("chr", "pos"), convert = TRUE) %>%
+    pivot_longer(-c(chr, pos), names_to = "rat_id", values_to = "genotype") %>%
+    group_by(chr, pos) %>%
+    summarise(n_hets = sum(genotype == "H"), .groups = "drop")
+
+in_window <- expr %>%
+    # slice(1:100) %>%
+    group_by(chr, start, gene_id) %>%
+    summarise({
+        chrom <- chr
+        snps <- geno %>%
+            filter(chr == chrom) %>%
+            filter(start >= pos - 1e6L,
+                   start <= pos + 1e6L) %>%
+            select(-chr)
+    }, .groups = "drop")
+```
+
+```{r}
+in_window %>%
+    count(chr, start, gene_id) %>%
+    complete(gene_id, fill = list(n = 0)) %>%
+    ggplot(aes(x = n)) +
+    geom_histogram(bins = 30) +
+    xlab("Number of SNP loci") +
+    ggtitle("Number of SNP loci in each gene window")
+```
+
+```{r}
+geno %>%
+    ggplot(aes(x = n_hets)) +
+    geom_histogram(bins = 30) +
+    ggtitle("Number of hets at each SNP locus (ignoring genes)")
+```
+
+```{r}
+in_window %>%
+    group_by(gene_id) %>%
+    summarise(total_hets = sum(n_hets), .groups = "drop") %>%
+    complete(gene_id, fill = list(total_hets = 0)) %>%
+    ggplot(aes(x = total_hets)) +
+    geom_histogram(bins = 30) +
+    xlab("Total number of hets in window") +
+    ggtitle("Total number of hets at all SNP loci per window")
+```
+
+```{r}
+in_window %>%
+    group_by(gene_id) %>%
+    summarise(mean_hets = mean(n_hets), .groups = "drop") %>%
+    ggplot(aes(x = mean_hets)) +
+    geom_histogram(bins = 30) +
+    xlab("Average number of hets") +
+    ggtitle("Average number of hets across SNP loci per window")
+```
+
+```{r}
+in_window %>%
+    group_by(gene_id) %>%
+    summarise(max_hets = max(n_hets), .groups = "drop") %>%
+    ggplot(aes(x = max_hets)) +
+    geom_histogram(bins = 30) +
+    xlab("Maximum number of hets") +
+    ggtitle("Maximum number of hets across SNP loci per window")
+```

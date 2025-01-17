@@ -1,0 +1,89 @@
+---
+title: "tensorQTL bootstrapping"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+
+codes <- c(Acbc = "AQCT", IL = "IQCT", LHB = "LQCT", PL = "PQCT", VoLo = "VQCT")
+
+bs <- crossing(tissue = names(codes),
+               perm = 1:5) %>%
+    group_by(tissue, perm) %>%
+    summarise(
+        read_tsv(str_glue("../data/tensorqtl/bootstrap/{codes[tissue]}_{perm}.cis_qtl.txt.gz"),
+                 col_types = "c-----c---------ddd"),
+        .groups = "drop"
+    )
+
+eqtls <- tibble(tissue = names(codes),
+                perm = 0) %>%
+    group_by(tissue, perm) %>%
+    summarise(
+        read_tsv(str_glue("../data/tensorqtl/{codes[tissue]}.cis_qtl.txt.gz"),
+                 col_types = "c-----c---------ddd"),
+        .groups = "drop"
+    )
+
+d <- bind_rows(bs, eqtls) %>%
+    filter(qval < 0.05) %>%
+    mutate(actual = perm == 0)
+```
+
+Many more bootstrapped p-values are significant:
+
+```{r}
+bind_rows(eqtls, bs) %>%
+    ggplot(aes(x = pval_beta)) +
+    facet_grid(rows = vars(perm), cols = vars(tissue)) +
+    geom_histogram(bins = 50) +
+    ggtitle("p-values in actual (perm 0) vs. boostrapped data")
+```
+
+They're still correlated with p-values for original data, but lower overall:
+
+```{r}
+tmp <- inner_join(
+    eqtls %>%
+        select(tissue, phenotype_id, pval = pval_beta),
+    bs %>%
+        filter(perm == 5) %>%
+        select(tissue, phenotype_id, pval_boot = pval_beta),
+    by = c("tissue", "phenotype_id")
+)
+
+tmp %>%
+    group_by(tissue) %>%
+    summarise(R = cor(pval, pval_boot),
+              rho = cor(pval, pval_boot, method = "spearman"))
+
+tmp %>%
+    ggplot(aes(x = pval, y = pval_boot)) +
+    facet_wrap(~ tissue) +
+    geom_point(size = 0.25, alpha = 0.3) +
+    geom_abline(slope = 1, intercept = 0, color = "red") +
+    scale_x_log10() +
+    scale_y_log10() +
+    coord_fixed() +
+    xlab("p-value (actual data)") +
+    ylab("p-value (one bootstrapped dataset)")
+```
+
+This results in way more significant eQTLs:
+
+```{r}
+bind_rows(eqtls, bs) %>%
+    ggplot(aes(x = qval)) +
+    facet_wrap(~ perm) +
+    geom_histogram(bins = 50) +
+    ggtitle("q-values in actual (perm 0) vs. boostrapped data")
+```
+
+```{r}
+d %>%
+    count(tissue, perm, actual, name = "n_eGenes") %>%
+    ggplot(aes(x = tissue, y = n_eGenes, color = actual)) +
+    ggbeeswarm::geom_beeswarm(size = 1, cex = 2) +
+    expand_limits(y = 0)
+```

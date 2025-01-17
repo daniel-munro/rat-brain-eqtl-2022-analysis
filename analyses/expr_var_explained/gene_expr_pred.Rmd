@@ -1,0 +1,216 @@
+---
+title: "gene_expr_pred"
+output: html_notebook
+---
+
+I used `gene_expr_pred` to predict expression on the full NAcc dataset, which was also used to compute the aFC values (i.e. training and testing on the same data for now).
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+tissues <- c("IL", "LHb", "NAcc", "OFC", "PL")
+
+# pred <- read_tsv("gene_expr_pred/out_NQCT/expressions/gene_expression.txt",
+#                  col_types = cols(gene_id = "c", .default = "d")) |>
+#     pivot_longer(-gene_id, names_to = "sample", values_to = "prediction")
+pred <- tibble(tissue = tissues) |>
+    group_by(tissue) |>
+    summarise(
+        read_tsv(str_glue("gene_expr_pred/out_{tissue}/expressions/gene_expression.txt"),
+                 col_types = cols(gene_id = "c", .default = "d")) |>
+            pivot_longer(-gene_id, names_to = "sample", values_to = "prediction"),
+        .groups = "drop"
+    )
+
+expr <- tibble(tissue = tissues) |>
+    group_by(tissue) |>
+    summarise(
+        read_tsv(str_glue("../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
+                 col_types = cols(`#chr` = "-", start = "-", end = "-",
+                                  gene_id = "c", .default = "d")) |>
+            pivot_longer(-gene_id, names_to = "sample", values_to = "expression"),
+        .groups = "drop"
+    ) |>
+    inner_join(pred, by = c("tissue", "gene_id", "sample"))
+
+corrs <- expr |>
+    group_by(tissue, gene_id) |>
+    summarise(
+        corr = if (sd(prediction) == 0) NA else cor(expression, prediction),
+        R2 = 1 - var(prediction - expression) / var(expression), # From Nava
+        .groups = "drop"
+    ) |>
+    arrange(tissue, desc(R2))
+
+write_tsv(corrs, "expr_R2.tsv")
+```
+
+```{r}
+corrs |>
+    ggplot(aes(x = corr)) +
+    facet_wrap(~ tissue) +
+    geom_histogram(bins = 30)
+corrs |>
+    ggplot(aes(x = R2)) +
+    facet_wrap(~ tissue) +
+    geom_histogram(bins = 30)
+```
+
+```{r}
+corrs |>
+    mutate(corr_sq = corr ^ 2, .after = corr) |>
+    summary()
+```
+
+```{r fig.width = 5, fig.height = 5}
+expr |>
+    filter(gene_id %in% corrs$gene_id[1:9]) |>
+    ggplot(aes(x = expression, y = prediction, color = tissue)) +
+    facet_wrap(vars(gene_id), ncol = 3, scales = "free") +
+    geom_point(size = 1, alpha = 0.5) +
+    ggtitle("Best-predicted genes")
+```
+
+## Comparison to human
+
+I got variance explained values from Nava for GTEx Adipose tissue.
+
+```{r}
+## These are actually heritability:
+# human <- read_tsv(
+#     "~/Dropbox (Scripps Research)/Pej_H2_Comparisons/01_Data/FromNava/expression_variance/variance_predicted_expression.txt",
+#     col_types = "cd"
+# ) |>
+#     filter(!is.na(WHLBLD))
+# human2 <- read_tsv(
+#     "~/Dropbox (Scripps Research)/Pej_H2_Comparisons/01_Data/FromNava/expression_variance/Variance_total_expression_afterPeerFactor.txt",
+#     col_types = "cd"
+# ) |>
+#     filter(!is.na(WHLBLD))
+```
+
+```{r}
+# human |>
+#     ggplot(aes(x = WHLBLD)) +
+#     geom_histogram(bins = 50) +
+#     scale_x_log10()
+# human2 |>
+#     ggplot(aes(x = WHLBLD)) +
+#     geom_histogram(bins = 50) +
+#     scale_x_log10()
+```
+
+```{r}
+human <- tibble(n_eQTLs = 1:13) |>
+    group_by(n_eQTLs) |>
+    # summarise(
+    #     read_csv(str_glue("Fig_1_F/Residual_info_{n_eQTLs}_variants.csv"),
+    #              col_types = c(gene_id = "c", .default = "d")) |>
+    #         # mutate(R2_top = 1 - Residual_1variant,
+    #         #        R2_all = 1 - .data[[str_c("Residual_", abc, "variant")]])},
+    #         select(all_of(c("gene_id", "Residual_1variant", str_glue("Residual_{n_eQTLs}variant")))) |>
+    #         mutate(R2_top = 1 - Residual_1variant),
+    #     .groups = "drop"
+    # )
+    summarise({
+        d <- read_csv(str_glue("Fig_1_F/Residual_info_{n_eQTLs}_variants.csv"),
+                      col_types = c(gene_id = "c", .default = "d"))
+        tibble(gene_id = d[["gene_id"]],
+               R2_top = 1 - d[["Residual_1variant"]],
+               R2_all = 1 - d[[str_glue("Residual_{n_eQTLs}variant")]])
+    }, .groups = "drop")
+```
+
+```{r}
+human |>
+    pivot_longer(c(R2_top, R2_all), names_to = "eQTLs_used", values_to = "R2") |>
+    mutate(n_eQTLs = as.factor(n_eQTLs)) |>
+    ggplot(aes(x = n_eQTLs, y = R2, color = eQTLs_used)) +
+    geom_boxplot(outlier.size = 0.25) +
+    coord_cartesian(ylim = c(0, 1))
+```
+
+```{r}
+tmp <- bind_rows(
+    corrs |>
+        select(dataset = tissue, R2),
+        # mutate(dataset = "Rat NAcc"),
+    human |>
+        select(R2 = R2_top) |>
+        mutate(dataset = "GTEx Adipose, top eQTL",
+               R2 = pmax(-0.5, R2)),
+    human |>
+        select(R2 = R2_all) |>
+        mutate(dataset = "GTEx Adipose, all eQTLs")
+)
+tmp |>
+    # ggplot(aes(x = R2, fill = dataset)) +
+    # geom_density(color = NA, alpha = 0.5)# +
+    # coord_cartesian(xlim = c(-1, 2))
+    ggplot(aes(x = dataset, y = R2)) +
+    geom_violin() #+
+    # geom_boxplot(width = 0.1, outlier.shape = NA)
+```
+
+Boxen plots (Widest box is inter-quartile range, and each additional box shows half of remaining values):
+
+```{r}
+tmp |>
+    ggplot(aes(x = dataset, y = R2)) +
+    lvplot::geom_lv(fill = "white", color = "black")
+```
+
+```{r}
+tmp |>
+    group_by(dataset) |>
+    skimr::skim()
+```
+
+## Subset to homolog pairs
+
+Comparing rat R2 to human R2 using all eQTLs, since I'm using all eQTLs for rat:
+
+```{r}
+# Made in rat_human_aFC_stats.R:
+gene_map <- read_tsv("../aFC/gene_map.txt", col_types = "cc") |>
+    mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", ""))
+
+hom_r2 <- tibble(tis = tissues) |>
+    group_by(tis) |>
+    summarise(
+        gene_map |>
+            rename(gene_id.rat = gene_id_rat,
+                   gene_id.human = gene_id_human) |>
+            inner_join(
+                corrs |>
+                    filter(tissue == tis) |>
+                    select(gene_id.rat = gene_id,
+                           R2.rat = R2),
+                by = "gene_id.rat"
+            ) |>
+            inner_join(
+                human |>
+                    select(gene_id.human = gene_id,
+                           R2.human = R2_all),
+                by = "gene_id.human"
+            ),
+        .groups = "drop"
+    )
+
+tmp2 <- hom_r2 |>
+    select(tis, R2.rat, R2.human) |>
+    pivot_longer(c(R2.rat, R2.human), names_to = "organism", names_prefix = "R2.",
+                 values_to = "R2")
+
+tmp2 |>
+    ggplot(aes(x = organism, y = R2)) +
+    facet_wrap(~ tis, nrow = 1) +
+    geom_violin() +
+    geom_boxplot(width = 0.1, outlier.shape = NA)
+```
+
+```{r}
+tmp2 |>
+    group_by(tis, organism) |>
+    skimr::skim()
+```

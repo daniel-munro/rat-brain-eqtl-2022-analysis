@@ -1,0 +1,27 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+
+tissues <- c(ACCT = "Acbc", ICCT = "IL", LCCT = "LHB", PCCT = "PL", VCCT = "VoLo")
+
+expr <- tibble(tissue = tissues) %>%
+    group_by(tissue) %>%
+    summarise(
+        read_tsv(str_glue("data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
+                 col_types = cols(`#chr` = "-", start = "-", end = "-",
+                                  gene_id = "c", .default = "d")) %>%
+            filter(gene_id == "ENSRNOG00000062090") %>% # Sry
+            pivot_longer(-gene_id, names_to = "rat_id", values_to = "expr"),
+        .groups = "drop"
+    )
+
+covar <- read_csv("data/DemographicInfo_TN_RNASeq_88_LauraSaba.csv",
+                  col_types = cols(rat_rfid = "c", batchnumber = "c",
+                                   sex_mf = "c", .default = "-")) %>%
+    mutate(individual = toupper(rat_rfid))
+```
+

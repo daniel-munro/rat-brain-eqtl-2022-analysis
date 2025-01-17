@@ -1,0 +1,295 @@
+---
+title: "Vg from ANEVA-h"
+output: 
+  html_notebook: 
+    code_folding: hide
+---
+
+$V^G$ is ["the expected variance in the dosage that is due to interindividual genetic differences within a population"](https://www.science.org/doi/10.1126/science.aay0256). I obtained precomputed $V^G$ estimates for GTEx (v8) and ran ANEVA-h on my phASER ASE counts to get $V^G$ per gene for HS rat brain tissues.
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+heatmap_order <- function(fac1, fac2, value) {
+    df <- tibble(fac1, fac2, value) |>
+        pivot_wider(fac1, names_from = fac2, values_from = value)
+    mat <- df |> select(-fac1) |> as.matrix()
+    rownames(mat) <- df$fac1
+    clust <- hclust(dist(mat))
+    factor(fac1, levels = clust$labels[clust$order])
+}
+
+# load("../data/anevah/Vg_GTEx_v7.rda")
+# gtex <- Vg_GTEx_v7 |>
+# gtex <- read_tsv("../data/anevah/Vg_GTEx_v8.txt",
+#                  col_types = cols(IDs = "c", .default = "d")) |>
+#     select(-`...1`) |>
+#     rename(gene_id = IDs) |>
+#     pivot_longer(-gene_id, names_to = "tissue", values_to = "Vg")
+# # rm(Vg_GTEx_v7)
+gtex <- read_tsv("Vg_GTEx_phASER.tsv", col_types = cols(GENE_ID = "c", .default = "d")) |>
+    rename(gene_id = GENE_ID) |>
+    pivot_longer(-gene_id, names_to = "tissue", values_to = "Vg")
+
+rat <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
+    group_by(tissue) |>
+    summarise(
+        read_tsv(str_glue("Vg.{tissue}.tsv.gz"), col_types = "cd"),
+        .groups = "drop"
+    ) |>
+    rename(gene_id = GENE_ID)
+
+tissues <- jsonlite::fromJSON("../data/gtex/tissueInfo.json")[[1]] |>
+    select(tissueSiteDetailAbbr,
+           tissueSiteDetail) |>
+    deframe() |>
+    c(IL = "Infralimbic cortex",
+      LHb = "Lateral habenula",
+      NAcc = "Nucleus accumbens core",
+      OFC = "Orbitofrontal cortex",
+      PL = "Prelimbic cortex")
+
+gene_map <- read_tsv("../data/gtex/orthologs.txt", col_types = "cc") |>
+    mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", ""))
+
+vg_all <- bind_rows(
+    gtex |>
+        filter(!is.na(Vg)) |>
+        mutate(data = if_else(str_sub(tissue, 1, 3) == "BRN", "GTEx_brain", "GTEx_other"),
+               .before = "tissue"),
+    rat |>
+        mutate(data = "rat", .before = "tissue")
+)
+
+vg <- vg_all |>
+    filter(data == "rat" | str_sub(tissue, 1, 3) == "BRN")
+```
+
+```{r}
+# all_ase <- tibble(tissue = unique(rat$tissue)) |>
+#     group_by(tissue) |>
+#     summarise(
+#         tibble(gene_id = str_glue("../data/anevah/anevah_{tissue}_ref_counts.tsv") |>
+#                    read.delim(sep = "\t", row.names = 1) |>
+#                    rownames()),
+#         .groups = "drop"
+#     ) |>
+#     left_join(df, by = c("tissue", "gene_id"))
+# 
+# mean(!is.na(gtex$Vg))
+# mean(!is.na(all_ase$Vg))
+```
+
+Number of rat genes with Vg estimates is on the low range of GTEx:
+
+```{r fig.width = 4.5}
+vg_all |>
+    mutate(tissue = tissues[tissue] |> fct_infreq()) |>
+    ggplot(aes(x = tissue, fill = data)) +
+    geom_bar() +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
+```
+
+Correlations in Vg for GTEx tissue pairs. Rows/cols are ordered as if there were dendrograms:
+
+```{r fig.width = 5, fig.height = 4}
+# vg |>
+#     filter(data == "GTEx") |>
+#     pivot_wider(gene_id, names_from = "tissue", values_from = "Vg") |>
+#     select(-gene_id)
+cor_gtex <- vg_all |>
+    filter(data != "rat") |>
+    with(crossing(tissue.x = unique(tissue),
+                  tissue.y = unique(tissue),
+                  gene_id = unique(gene_id))) |>
+    left_join(select(vg_all, tissue.x = tissue, gene_id, Vg.x = Vg),
+              by = c("tissue.x", "gene_id")) |>
+    left_join(select(vg_all, tissue.y = tissue, gene_id, Vg.y = Vg),
+              by = c("tissue.y", "gene_id")) |>
+    filter(!is.na(Vg.x),
+           !is.na(Vg.y)) |>
+    group_by(tissue.x, tissue.y) |>
+    summarise(r = cor(Vg.x, Vg.y),
+              n = n(),
+              .groups = "drop")
+
+cor_gtex |>
+    mutate(tissue.x = tissues[tissue.x],
+           tissue.y = tissues[tissue.y],
+           tissue.x = heatmap_order(tissue.x, tissue.y, r),
+           tissue.y = heatmap_order(tissue.y, tissue.x, r)) |>
+    ggplot(aes(x = tissue.x, y = tissue.y, fill = r)) +
+    geom_tile() +
+    coord_fixed() +
+    scale_fill_viridis_c(limits = c(0, 1)) +
+    xlab(NULL) +
+    ylab(NULL) +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
+```
+
+HS rat brain tissues:
+
+```{r}
+cor_rat <- vg |>
+    filter(data == "rat") |>
+    with(crossing(tissue.x = unique(tissue),
+                  tissue.y = unique(tissue),
+                  gene_id = unique(gene_id))) |>
+    left_join(select(vg, tissue.x = tissue, gene_id, Vg.x = Vg),
+              by = c("tissue.x", "gene_id")) |>
+    left_join(select(vg, tissue.y = tissue, gene_id, Vg.y = Vg),
+              by = c("tissue.y", "gene_id")) |>
+    filter(!is.na(Vg.x),
+           !is.na(Vg.y)) |>
+    group_by(tissue.x, tissue.y) |>
+    summarise(r = cor(Vg.x, Vg.y),
+              n = n(),
+              .groups = "drop")
+
+cor_rat |>
+    mutate(tissue.x = tissues[tissue.x],
+           tissue.y = tissues[tissue.y],
+           tissue.x = heatmap_order(tissue.x, tissue.y, r),
+           tissue.y = heatmap_order(tissue.y, tissue.x, r)) |>
+    ggplot(aes(x = tissue.x, y = tissue.y, fill = r)) +
+    geom_tile() +
+    coord_fixed() +
+    scale_fill_viridis_c(limits = c(0, 1)) +
+    # scale_fill_gradient2(limits = c(0, 1)) +
+    xlab(NULL) +
+    ylab(NULL) +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
+```
+
+Compare all brain tissues from both species. For cross-species pairs compare orthologs, and for within-species pairs subset to genes that have an ortholog with Vg in at least one tissue. (The tissues that start with "Brain - " are GTEx, others are rat):
+
+```{r}
+has_vg <- gene_map |>
+    filter(gene_id_rat %in% vg$gene_id,
+           gene_id_human %in% vg$gene_id) |>
+    with(unique(c(gene_id_rat, gene_id_human)))
+
+cor_all <- vg |>
+    with(crossing(tissue.x = unique(tissue),
+                  tissue.y = unique(tissue))) |>
+    group_by(tissue.x, tissue.y) |>
+    summarise({
+        data.x <- vg |>
+            filter(tissue == tissue.x) |>
+            with(unique(data))
+        data.y <- vg |>
+            filter(tissue == tissue.y) |>
+            with(unique(data))
+        if (data.x == data.y) {
+            inner_join(
+                filter(vg, tissue == tissue.x),
+                filter(vg, tissue == tissue.y),
+                by = "gene_id"
+            ) |>
+                filter(gene_id %in% has_vg) |>
+                rename(gene_id.x = gene_id) |>
+                mutate(gene_id.y = gene_id.x)
+        } else if (data.x == "rat") {
+            gene_map |>
+                rename(gene_id.x = gene_id_rat,
+                       gene_id.y = gene_id_human) |>
+                inner_join(
+                    filter(vg, tissue == tissue.x),
+                    by = c("gene_id.x" = "gene_id")
+                ) |>
+                inner_join(
+                    filter(vg, tissue == tissue.y),
+                    by = c("gene_id.y" = "gene_id")
+                )
+        } else {
+            gene_map |>
+                rename(gene_id.x = gene_id_human,
+                       gene_id.y = gene_id_rat) |>
+                inner_join(
+                    filter(vg, tissue == tissue.x),
+                    by = c("gene_id.x" = "gene_id")
+                ) |>
+                inner_join(
+                    filter(vg, tissue == tissue.y),
+                    by = c("gene_id.y" = "gene_id")
+                )
+        }
+    }, .groups = "drop") |>
+    group_by(tissue.x, tissue.y) |>
+    summarise(r = cor(Vg.x, Vg.y),
+              n = n(),
+              .groups = "drop")
+```
+
+```{r  fig.width = 3, fig.height = 3}
+cor_all |>
+    mutate(tissue.x = tissues[tissue.x],
+           tissue.y = tissues[tissue.y],
+           tissue.x = heatmap_order(tissue.x, tissue.y, r),
+           tissue.y = heatmap_order(tissue.y, tissue.x, r)) |>
+    ggplot(aes(x = tissue.x, y = tissue.y, fill = r)) +
+    geom_tile() +
+    coord_fixed() +
+    expand_limits(fill = 0) +
+    scale_fill_viridis_c() +
+    # scale_fill_gradient2() +
+    xlab(NULL) +
+    ylab(NULL) +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
+```
+
+Number of ortholog pairs with Vg, used to calculate the above:
+
+```{r  fig.width = 3, fig.height = 3}
+cor_all |>
+    mutate(tissue.x = tissues[tissue.x],
+           tissue.y = tissues[tissue.y],
+           tissue.x = heatmap_order(tissue.x, tissue.y, r),
+           tissue.y = heatmap_order(tissue.y, tissue.x, r)) |>
+    ggplot(aes(x = tissue.x, y = tissue.y, fill = n)) +
+    geom_tile() +
+    coord_fixed() +
+    # scale_fill_viridis_c() +
+    # scale_fill_gradient() +
+    xlab(NULL) +
+    ylab(NULL) +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
+```
+
+Compare average $SD^G$ ($\sqrt{V^G}$) per gene in human vs. average in rat, with Deming regression line.
+
+```{r}
+mean_ortho <- gene_map |>
+    inner_join(
+        vg |>
+            filter(data == "rat") |>
+            group_by(gene_id) |>
+            summarise(SDg_rat = mean(sqrt(Vg)), .groups = "drop"),
+        by = c("gene_id_rat" = "gene_id")
+    ) |>
+    inner_join(
+        vg |>
+            filter(data == "GTEx_brain") |>
+            group_by(gene_id) |>
+            summarise(SDg_GTEx = mean(sqrt(Vg)), .groups = "drop"),
+        by = c("gene_id_human" = "gene_id")
+    )
+
+deming <- mean_ortho |>
+    summarise({
+        coef <- deming::deming(SDg_GTEx ~ SDg_rat)$coefficients
+        tibble(intercept = coef[1],
+               slope = coef[2])
+    })
+
+mean_ortho |>
+    mutate(SDg_rat = pmin(SDg_rat, 0.5),
+           SDg_GTEx = pmin(SDg_GTEx, 0.5)) |>
+    ggplot(aes(x = SDg_rat, y = SDg_GTEx)) +
+    geom_point(size = 1, alpha = 0.5) +
+    geom_abline(aes(intercept = intercept, slope = slope), data = deming,
+                color = "#8888cc") +
+    coord_fixed() +
+    ggtitle(str_glue("Pearson's r = {with(mean_ortho, cor(SDg_GTEx, SDg_rat) |> round(4))}"))
+```
+

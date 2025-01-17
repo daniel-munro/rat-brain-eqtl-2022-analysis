@@ -1,0 +1,163 @@
+---
+title: "trans-eQTLs"
+author: "Daniel Munro"
+date: "11/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+```
+
+```{r}
+genes <- read_tsv("../data/expression/ensembl-gene_inv-quant_Acbc.bed.gz",
+                  col_types = cols(`#chr` = "i", start = "i", gene_id = "c",
+                                   .default = "-")) %>%
+    rename(gene_chrom = `#chr`,
+           gene_pos = start)
+
+eqtls <- read_tsv("../data/tensorqtl/AQCT.trans_qtl_pairs.txt.gz", col_types = "ccd---") %>%
+    rename(gene_id = phenotype_id) %>%
+    separate(variant_id, c("chrom", "pos"), sep = ":", convert = TRUE,
+             remove = FALSE) %>%
+    mutate(chrom = str_replace(chrom, "chr", "") %>% as.integer()) %>%
+    left_join(genes, by = "gene_id")
+```
+
+## Colocalization
+
+Plot distances to find appropriate trans-eQTL cis-eQTL distance cutoffs. (Note that part of the dropoff at greater distances is due to chromosome edges):
+
+```{r}
+eqtls %>%
+    filter(chrom == gene_chrom,
+           abs(pos - gene_pos) < 1e7) %>%
+    mutate(TSS_distance = (pos - gene_pos) / 1e6) %>%
+    ggplot(aes(x = TSS_distance)) +
+    geom_histogram(bins = 100) +
+    xlab("TSS distance (Mbp)")
+```
+
+To be conservative, define trans-eQTLs as the variant and TSS being on different chromosomes or more than 8 Mbp apart, and cis-eQTLs as the variants and TSS being within 2 Mbp.
+
+```{r}
+tmp <- eqtls %>%
+    mutate(cis = chrom == gene_chrom & abs(pos - gene_pos) < 2e6,
+           trans = chrom != gene_chrom | abs(pos - gene_pos) > 8e6,
+           TSS_distance = (pos - gene_pos) / 1e6)
+
+tmp2 <- tmp %>%
+    group_by(variant_id) %>%
+    # filter(n() > 1) %>%
+    filter(any(cis), any(trans)) %>%
+    ungroup() %>%
+    filter(cis | trans)
+
+tmp2 %>%
+    filter(abs(TSS_distance) < )
+    ggplot(aes(x = TSS_distance, fill = cis)) +
+    geom_density()
+```
+
+Save trans and all eQTL gene lists to use as target and background lists for GO term enrichment using [GOrilla](http://cbl-gorilla.cs.technion.ac.il/). Also save eGenes for cis-eQTLs whose eVariants are also part of trans-eQTLs:
+
+```{r}
+# tmp %>%
+#     filter(trans) %>%
+#     distinct(gene_id) %>%
+#     write_tsv("GOrilla/GO_enrich_trans.txt", col_names = FALSE)
+# 
+# tmp %>%
+#     distinct(gene_id) %>%
+#     write_tsv("GOrilla/GO_enrich_all.txt", col_names = FALSE)
+# 
+# tmp %>%
+#     filter(pval < 1e-6, trans) %>%
+#     distinct(gene_id) %>%
+#     write_tsv("GOrilla/GO_enrich_trans_1e-6.txt", col_names = FALSE)
+# 
+# tmp %>%
+#     filter(pval < 1e-6) %>%
+#     distinct(gene_id) %>%
+#     write_tsv("GOrilla/GO_enrich_all_1e-6.txt", col_names = FALSE)
+# 
+# tmp %>%
+#     filter(pval < 1e-6) %>%
+#     group_by(variant_id) %>%
+#     filter(any(cis), any(trans)) %>%
+#     ungroup() %>%
+#     filter(cis) %>%
+#     distinct(gene_id) %>%
+#     write_tsv("GOrilla/GO_enrich_cis-of-trans_1e-6.txt", col_names = FALSE)
+```
+
+## CDS trans-eQTLs
+
+```{r}
+vep <- read_tsv("../data/vep.txt.gz", comment = "##", na = "-",
+                col_types = "c--cc-c--icc-c") %>%
+    filter(!is.na(Protein_position)) %>%
+    rename(variant_id = `#Uploaded_variation`) %>%
+    # distinct() # Sometimes multiple transcripts are listed for the same gene.
+    distinct(variant_id, .keep_all = TRUE)
+
+cds_eqtls <- eqtls %>%
+    mutate(cis = chrom == gene_chrom & abs(pos - gene_pos) < 2e6,
+           trans = chrom != gene_chrom | abs(pos - gene_pos) > 8e6,
+           TSS_distance = (pos - gene_pos) / 1e6) %>%
+    left_join(vep, by = "variant_id") %>%
+    filter(cis | trans) %>%
+    mutate(eQTL_type = if_else(cis, "cis", "trans"),
+           CDS_variant = !is.na(Gene))
+```
+
+cis-eQTLs are more likely than trans-eQTLs to fall in coding sequences:
+
+```{r}
+cds_eqtls %>%
+    ggplot(aes(x = eQTL_type, fill = CDS_variant)) +
+    geom_bar(position = "fill") +
+    coord_flip()
+```
+
+CDS cis-eQTLs and trans-eQTLs have similar portions of missense and synonymous:
+
+```{r}
+cds_eqtls %>%
+    filter(CDS_variant) %>%
+    ggplot(aes(x = eQTL_type, fill = Consequence)) +
+    geom_bar(position = "fill")
+```
+
+## trans-eQTL mediating gene expression and trans-eQTL effect size
+
+If a SNP affects expression of a nearby gene that has a trans-effect on another gene's expression, we might expect that the effect size of this trans-eQTL would be larger in tissues where the mediating gene has higher expression.
+
+Does the expression of a putative trans-eQTL mediating gene (i.e. cis-eGene with same eSNP as trans-eSNP) correlate with aFC of the trans-eQTL across tissues? (Assume aFC = 0 in tissues lacking the trans-eQTL.)
+
+## Inspect 10 trans-eGenes with lowest p-values
+
+```{r}
+gene_names <- read_tsv("../../eyes/data/reference/GENES_RAT.txt",
+                  col_types = cols(ENSEMBL_ID = "c", SYMBOL = "c", .default = "-"),
+                  skip = 83) %>%
+    rename(gene_id = ENSEMBL_ID,
+           gene = SYMBOL) %>%
+    separate_rows(gene_id, sep=";") %>%
+    # filter(!str_detect(gene, "^LOC\\d+$")) %>%
+    group_by(gene_id) %>%
+    slice(1) %>%
+    ungroup()
+
+eqtls %>%
+    mutate(cis = chrom == gene_chrom & abs(pos - gene_pos) < 5e6) %>%
+    filter(!cis) %>%
+    group_by(gene_id) %>%
+    # summarise(min_p = min(pval), .groups = "drop")
+    slice_min(pval, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    slice_min(pval, n = 10) %>%
+    left_join(gene_names, by = "gene_id") %>%
+    select(pval, variant_id, gene, gene_chrom, gene_pos) %>% select(gene)
+```

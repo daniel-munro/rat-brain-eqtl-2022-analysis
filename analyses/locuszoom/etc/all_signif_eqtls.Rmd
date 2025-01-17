@@ -1,0 +1,109 @@
+---
+title: "All significant eQTLs"
+author: "Daniel Munro"
+date: "10/27/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+```
+
+```{r}
+eqtls <- read_tsv("../data/tensorqtl/PCCT.cis_qtl_signif.txt.gz",
+                   col_types = "ccidiid--d") %>%
+    rename(gene_id = phenotype_id) %>%
+    separate(variant_id, c("chrom", "pos"), sep = ":", convert = TRUE,
+             remove = FALSE) %>%
+    mutate(chrom = str_replace(chrom, "chr", "") %>% as.integer(),
+           pos = pos / 1e6)
+
+gene_names <- read_tsv("../../eyes/data/reference/GENES_RAT.txt",
+                       col_types = cols(ENSEMBL_ID = "c", SYMBOL = "c", .default = "-"),
+                       skip = 83) %>%
+    rename(gene_id = ENSEMBL_ID,
+           gene = SYMBOL) %>%
+    separate_rows(gene_id, sep=";") %>%
+    filter(!str_detect(gene, "^LOC\\d+$")) %>%
+    group_by(gene_id) %>%
+    slice(1) %>%
+    ungroup()
+```
+
+```{r}
+eqtls %>%
+    count(gene_id) %>%
+    mutate(gene_rank = fct_reorder(gene_id, n) %>% fct_rev() %>% as.integer()) %>%
+    ggplot(aes(x = gene_rank, y = n)) +
+    geom_col() +
+    ylab("Significant eQTL loci") +
+    xlab("Genes ranked by number of eQTL loci")
+```
+
+Significant eQTL loci for some randomly sampled genes:
+
+```{r}
+rand_genes <- eqtls %>%
+    distinct(gene_id) %>%
+    slice_sample(n = 5) %>%
+    pull(gene_id)
+
+# p <- map(rand_genes, function(gene) {
+for (gene in rand_genes) {
+    tmp <- eqtls %>%
+        filter(gene_id == gene) %>%
+        mutate(log10_pval = -log10(pval_nominal),
+               log10_threshold = -log10(pval_nominal_threshold),
+               tss = (pos - tss_distance / 1e6))
+    p <- ggplot(tmp, aes(x = pos, y = log10_pval)) +
+        geom_hline(aes(yintercept = log10_threshold), lty = 2, color = "#555555") +
+        geom_vline(aes(xintercept = tss)) +
+        geom_point() +
+        expand_limits(x = c(tmp$tss - 1, tmp$tss + 1), y = 0) +
+        ggtitle(gene) +
+        xlab("Position (Mbp)") +
+        ylab("-log10(pval)")
+    print(p)
+}
+# }) %>%
+```
+
+```{r}
+top_assoc <- eqtls %>%
+    group_by(gene_id) %>%
+    summarise(pval_nominal = min(pval_nominal), .groups = "drop") %>%
+    arrange(pval_nominal) %>%
+    left_join(gene_names, by = "gene_id") %>%
+    filter(!is.na(gene))
+
+tmp <- eqtls %>%
+    left_join(gene_names, by = "gene_id") %>%
+    filter(gene_id %in% top_assoc$gene_id[1:6]) %>%
+    mutate(log10_pval = -log10(pval_nominal),
+           log10_threshold = -log10(pval_nominal_threshold),
+           tss = (pos - tss_distance / 1e6))
+
+ggplot(tmp, aes(x = pos, y = log10_pval)) +
+    facet_wrap(~ gene, scales = "free") +
+    geom_hline(aes(yintercept = log10_threshold), lty = 2, color = "#555555") +
+    geom_vline(aes(xintercept = tss)) +
+    geom_point(size = 0.3) +
+    # expand_limits(x = c(tmp$tss - 1, tmp$tss + 1), y = 0) +
+    # ggtitle(gene) +
+    xlab("Position (Mbp)") +
+    ylab("-log10(pval)") +
+    theme_minimal()
+
+# ggsave("../locuszoom/top_eqtls.png", width = 8, height = 4)
+```
+
+```{r}
+eqtls %>%
+    group_by(gene_id) %>%
+    filter(pval_nominal == min(pval_nominal)) %>%
+    ungroup() %>%
+    ggplot(aes(x = tss_distance)) +
+    geom_histogram(bins = 100)
+```
+

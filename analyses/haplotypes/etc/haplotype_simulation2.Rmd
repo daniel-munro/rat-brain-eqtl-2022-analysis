@@ -1,0 +1,99 @@
+---
+title: "Haplotype simulation 2"
+author: "Daniel Munro"
+date: "6/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Expected generations until allele is fixed or lost:
+N <- 128
+p <- 1/8
+
+-4 * N * (p * log(p) + (1-p) * log(1-p) )
+```
+
+```{r}
+# Expected generations until allele is lost (given that it will be lost?):
+-4 * N * (p * log(p)) / (1 - p)
+```
+
+As a simpler simulation of one locus during HS breeding, model the strains at generation t as a sample from a multinomial distribution whose probabilities are computed as each strain's proportion in generation t-1.
+
+```{r}
+next_gen_mnom <- function(counts) {
+    rmultinom(1, sum(counts), counts / sum(counts)) %>% c()
+}
+# tibble(haplotype = LETTERS[1:8],
+#        count = N / 8) %>%
+#     mutate(p = count / sum(count)) %>%
+geno_sim_mnom <- function(pairs = 50, generations = 90) {
+    gens <- list(rmultinom(1, 4 * pairs, rep(1/8, times = 8)) %>% c())
+    for (gen in 2:generations) {
+        gens <- c(gens, list(next_gen_mnom(gens[[length(gens)]])))
+    }
+    gens %>%
+        enframe(name = "generation", value = "counts") %>%
+        rowwise() %>%
+        mutate(counts = list(tibble(strain = LETTERS[1:8], n = counts))) %>%
+        unnest(counts)
+}
+
+genos <- tibble(permutation = 1:200) %>%
+    group_by(permutation) %>%
+    summarise(geno_sim_mnom(generations = 300), .groups = "drop")
+
+# write_tsv(genos, "hap_proportions/multinom_sim.tsv")
+```
+
+Other model:
+- For each pair of alleles (i.e. each individual), there's a 50% chance both will maintain their 1/N share of the population, and a 25% chance that either one would take the other's share.
+- Ignoring mating scheme, in each generation alleles are randomly paired. For roughly half the pairs, one duplicates and replaces the other.
+- As a visual, shuffle all alleles and arrange in two lists whose corresponding elements are paired. The left half of the list is unchanged, while in the right half, the top list is duplicated and replaces the bottom half.
+- This shows how 25% of alleles are lost each generation, while another 25% duplicate.
+- [how that affects entropy]
+
+```{r}
+entropy <- function(counts) {
+    p <- counts / sum(counts)
+    -sum(p * log2(p))
+}
+x <- sample(LETTERS[1:8], 128, replace = TRUE)
+y <- c(table(x))
+entropy(y)
+entropy(c(table(x[1:64])))
+```
+
+```{r}
+next_gen <- function(alleles) {
+    x <- sample(0:1, length(alleles) / 2, replace = TRUE)
+    copy <- which(x == 1)
+    lose <- copy + length(alleles) / 2
+    alleles[lose] <- alleles[copy]
+    sample(alleles)
+}
+
+geno_sim <- function(pairs = 50, generations = 90) {
+    gens <- list(sample(LETTERS[1:8], 4 * pairs, replace = TRUE))
+    for (gen in 2:generations) {
+        gens <- c(gens, list(next_gen(gens[[length(gens)]])))
+    }
+    gens %>%
+        enframe(name = "generation", value = "strain") %>%
+        unnest(strain)
+}
+
+genos <- tibble(permutation = 1:200) %>%
+    group_by(permutation) %>%
+    summarise(geno_sim(generations = 300), .groups = "drop")
+
+counts <- genos %>%
+    count(permutation, generation, strain)
+
+# write_tsv(counts, "hap_proportions/simple_sim.tsv")
+```
+

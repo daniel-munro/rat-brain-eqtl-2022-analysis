@@ -1,0 +1,126 @@
+---
+title: "Similarity to founders"
+author: "Daniel Munro"
+date: "7/15/2020"
+output: html_document
+---
+
+Instead of genotype PCs as covariates, I'm using 8 covariates, each giving the similarity to a founder strain. This is calculated as the fraction of alleles (# loci * 2) that match, ignoring phase. So 0/0 vs. 1/1 at a locus is 0 matches, 0/1 vs. 0/0 is 1 match, 0/0 vs. 0/0 is 2 matches.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(patchwork)
+
+strains <- c(
+    A = "ACI-N",
+    B = "BN-N",
+    C = "BUF-N",
+    D = "F344-N",
+    E = "M520-N",
+    F = "MR-N",
+    G = "WN-N",
+    H = "WKY-N"
+)
+
+probs <- function(prob) {
+    names(dimnames(prob)) <- c("individual", "strain", "locus")
+    cubelyr::as.tbl_cube(prob) %>%
+        as_tibble()
+}
+```
+
+```{r}
+sim <- read_tsv("../data/tensorqtl/sim_to_founders.txt",
+                col_types = cols(ID = "c", .default = "d")) %>%
+    pivot_longer(-ID, names_to = "individual", values_to = "similarity") %>%
+    rename(strain = ID)
+```
+
+```{r fig.width=6, fig.height=3}
+sim %>%
+    mutate(strain = fct_rev(strain)) %>%
+    ggplot(aes(x = individual, y = strain, fill = similarity)) +
+    geom_tile() +
+    theme_minimal() +
+    theme(
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()
+    )
+```
+
+```{r}
+ggplot(sim, aes(x = strain, y = similarity)) +
+    geom_boxplot(outlier.shape = NA, color = "gray") +
+    geom_jitter(size = 0.5) +
+    theme_minimal()
+```
+
+Do these match the proportions of haplotype probabilities?
+
+```{r}
+d <- tibble(chrom = 1:20) %>%
+    group_by(chrom) %>%
+    summarise(
+        readRDS(str_c("../data/analysis/haplotype_probs_chr", chrom, ".rds")) %>%
+            probs(),
+        .groups = "drop"
+    ) %>%
+    group_by(individual, strain) %>%
+    summarise(prob = mean(prob), .groups = "drop") %>%
+    mutate(strain = strains[strain])
+```
+
+```{r}
+sim %>%
+    left_join(d, by = c("individual", "strain")) %>%
+    ggplot(aes(x = similarity, y = prob, color = strain)) +
+    geom_point() +
+    scale_color_brewer(type = "qual", palette = 6) +
+    xlab("Genotype similarity") +
+    ylab("Mean haplotype probability") +
+    theme_minimal()
+```
+
+Yes, the two metrics correlate pretty well for each strain.
+
+```{r}
+sim %>%
+    left_join(d, by = c("individual", "strain")) %>%
+    group_by(strain) %>%
+    summarise(correlation = cor(similarity, prob), .groups = "drop") %>%
+    arrange(desc(correlation))
+```
+
+## PCA
+
+```{r}
+pca <- sim %>%
+    pivot_wider(id_cols = "individual",
+                names_from = "strain",
+                values_from = "similarity") %>%
+    column_to_rownames("individual") %>%
+    prcomp()
+# pca$x %>%
+#     as_tibble(rownames = "individual") %>%
+#     pivot_longer(-individual, names_to = "PC")
+pve <- pca$sdev ^ 2 / sum(pca$sdev ^ 2)
+pve <- pve %>%
+    tibble(PC = 1:length(pve),
+           PVE = pve) %>%
+    mutate(cumulative_PVE = cumsum(PVE))
+```
+
+```{r fig.width = 6, fig.height = 3}
+p1 <- ggplot(pve, aes(x = PC, y = PVE)) +
+    geom_col()
+
+p2 <- ggplot(pve, aes(x = PC, y = cumulative_PVE)) +
+    geom_line() +
+    geom_point() +
+    expand_limits(y = 0)
+
+p1 + p2
+```
+

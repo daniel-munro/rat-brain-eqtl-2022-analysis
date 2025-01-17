@@ -1,0 +1,289 @@
+---
+title: "GEMMA eQTLs"
+author: "Daniel Munro"
+date: "10/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(patchwork)
+```
+
+```{r}
+# Should be using correct code, but ok as an approximation:
+perm <- read_tsv("../data/tensorqtl/ADCT.cis_qtl.txt.gz",
+                 col_types = "c-----------------d") %>%
+    rename(gene_id = phenotype_id)
+
+all_lm <- read_tsv("../data/gemma/Acbc.lm.assoc.txt", col_types = "c-c--------d")
+# d_lm <- all_lm %>% filter(p_wald < 0.05 / n_distinct(all_lm$gene_id))
+d_lm <- all_lm %>%
+    left_join(perm, by = "gene_id") %>%
+    filter(p_wald < pval_nominal_threshold)
+
+all_lmm <- read_tsv("../data/gemma/Acbc.lmm.assoc.txt",
+                    col_types = "c-c----------d--")
+# d_lmm <- all_lmm %>% filter(p_wald < 0.05 / n_distinct(all_lmm$gene_id))
+d_lmm <- all_lmm %>%
+    left_join(perm, by = "gene_id") %>%
+    filter(p_wald < pval_nominal_threshold)
+
+all_lmr <- read_tsv("../data/gemma/Acbc.lm_rand.assoc.txt",
+                    col_types = "c-c--------d")
+# d_lmr <- all_lmr %>% filter(p_wald < 0.05 / n_distinct(all_lmr$gene_id))
+
+all_lmmr <- read_tsv("../data/gemma/Acbc.lmm_rand.assoc.txt",
+                    col_types = "c-c----------d--")
+# d_lmmr <- all_lmmr %>% filter(p_wald < 0.05 / n_distinct(all_lmmr$gene_id))
+
+## qvalues don't work because the p-values are all low.
+# d_lm <- all_lm %>%
+#     distinct(gene_id, .keep_all = TRUE) %>%
+#     mutate(qvalue = qvalue::qvalue(p_wald)$qvalues)
+
+d_rand <- read_tsv("../data/gemma/Acbc.random_pairs.txt", col_types = "ccdd")
+d_r_rand <- read_tsv("../data/gemma/Acbc_rand.random_pairs.txt", col_types = "ccdd")
+# d_c_rand <- read_tsv("../data/gemma/Acbc_cov.random_pairs.txt",
+#                      col_types = "ccd-") %>%
+#     rename(p_lm = p_lm_x)
+d_c_rand <- read_tsv("../data/gemma/Acbc_cov.random_pairs.txt", col_types = "ccdd")
+# d_c_rand <- read_tsv("../data/gemma/Acbc_cov2.random_pairs.txt", col_types = "ccdd")
+```
+
+```{r}
+d <- full_join(d_lm %>% rename(p_lm = p_wald),
+               d_lmm %>% rename(p_lmm = p_wald),
+               by = c("gene_id", "rs")) %>%
+    mutate(LM_eQTL = !is.na(p_lm),
+           LMM_eQTL = !is.na(p_lmm))
+d %>%
+    count(LM_eQTL, LMM_eQTL)
+```
+Gene level:
+
+```{r}
+d2 <- full_join(d_lm %>% distinct(gene_id) %>% mutate(lm = TRUE),
+               d_lmm %>% distinct(gene_id) %>% mutate(lmm = TRUE),
+               by = "gene_id") %>%
+    mutate(LM_eQTL = !is.na(lm),
+           LMM_eQTL = !is.na(lmm))
+d2 %>%
+    count(LM_eQTL, LMM_eQTL)
+```
+
+Top associated variants per gene are either all overlapping or non-overlapping between methods:
+
+```{r}
+d %>%
+    # distinct(gene_id, .keep_all = TRUE) %>%
+    group_by(gene_id) %>%
+    summarise(n_shared = sum(LM_eQTL & LMM_eQTL),
+              n_total = n(),
+              frac_shared = n_shared / n_total,
+              .groups = "drop") %>%
+    with(table(frac_shared))
+```
+
+```{r}
+d %>%
+    count(gene_id) %>%
+    ggplot(aes(x = n)) +
+    geom_histogram(bins = 100) +
+    ggtitle("Number of top variants (equal p-values) per gene")
+
+# ggsave("top_variants_per_gene_hist.png", width = 5, height = 3)
+
+d %>%
+    count(gene_id) %>%
+    mutate(gene_rank = fct_reorder(gene_id, n) %>% fct_rev() %>% as.integer()) %>%
+    ggplot(aes(x = gene_rank, y = n)) +
+    geom_col() +
+    ylab("Number of top variants (same p-values)") +
+    xlab("Genes ranked by number of top variants")
+
+# ggsave("top_variants_per_gene.png", width = 6, height = 4)
+```
+
+```{r}
+tmp <- d %>%
+    filter(LM_eQTL & LMM_eQTL) %>%
+    distinct(gene_id, .keep_all = TRUE)
+tmp_r <- with(tmp, cor(p_lm, p_lmm)) %>% signif(4)
+
+p1 <- ggplot(tmp, aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    ggtitle("GEMMA p-values",
+            subtitle = str_glue("R = {tmp_r}, n = {nrow(tmp)}")) +
+    xlab("p-value, fixed effects model") +
+    ylab("p-value, linear mixed model")
+# p1
+
+tmp2 <- tmp %>%
+    mutate(log10p_lm = -log10(p_lm),
+           log10p_lmm = -log10(p_lmm))
+tmp2_r <- with(tmp2, cor(log10p_lm, log10p_lmm)) %>% signif(4)
+
+p2 <- ggplot(tmp2, aes(x = log10p_lm, y = log10p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    ggtitle("GEMMA -log10(p-values)",
+            subtitle = str_glue("R = {tmp2_r}, n = {nrow(tmp2)}")) +
+    xlab("-log10(p-value), fixed effects model") +
+    ylab("-log10(p-value), linear mixed model")
+# p2
+
+p1 + p2
+ggsave("lm_lmm_pvalues.png", width = 7.5, height = 4.2)
+```
+
+Same but with top associations for all genes:
+
+```{r fig.width = 7.5, fig.height = 4.2}
+tmp <- all %>%
+    filter(!is.na(p_lm) & !is.na(p_lmm)) %>%
+    distinct(gene_id, .keep_all = TRUE)
+tmp_r <- with(tmp, cor(p_lm, p_lmm)) %>% signif(4)
+
+p1 <- ggplot(tmp, aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    ggtitle("GEMMA p-value comparison",
+            subtitle = str_glue("R = {tmp_r}, n = {nrow(tmp)}"))
+
+tmp2 <- tmp %>%
+    mutate(log10p_lm = -log10(p_lm),
+           log10p_lmm = -log10(p_lmm))
+tmp2_r <- with(tmp2, cor(log10p_lm, log10p_lmm)) %>% signif(4)
+
+p2 <- ggplot(tmp2, aes(x = log10p_lm, y = log10p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    xlab("-log10(p_lm)") +
+    ylab("-log10(p_lmm)") +
+    ggtitle("GEMMA -log10(p-value) comparison",
+            subtitle = str_glue("R = {tmp2_r}, n = {nrow(tmp2)}"))
+
+p1 + p2
+# ggsave("lm_lmm_pvalues_all.png", width = 7.5, height = 4.2)
+```
+
+Same but for a random variant instead of top variant per gene:
+
+```{r}
+d_rand_r <- with(d_rand, cor(p_lm, p_lmm)) %>% signif(4)
+
+p1 <- ggplot(d_rand, aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    scale_x_log10() +
+    scale_y_log10() +
+    ggtitle("GEMMA p-value comparison:\nrandom variant per gene",
+            subtitle = str_glue("R = {d_rand_r}, n = {nrow(d_rand)}"))
+
+p2 <- ggplot(d_rand, aes(x = p_lm)) +
+    geom_histogram(bins = 100) +
+    expand_limits(y = 260)
+
+p3 <- ggplot(d_rand, aes(x = p_lmm)) +
+    geom_histogram(bins = 100) +
+    expand_limits(y = 260)
+
+p1 + (p2 / p3)
+# ggsave("rand_pvalues.png", width = 7, height = 4)
+```
+
+## Shuffled phenotypes
+
+I shuffled the rat IDs for the phenotypes (all together) so that they didn't correspond with the correct genotypes.
+
+```{r}
+allr <- full_join(all_lmr %>% rename(p_lm = p_wald),
+                 all_lmmr %>% rename(p_lmm = p_wald),
+                 by = c("gene_id", "rs"))
+
+tmpr <- allr %>%
+    filter(!is.na(p_lm) & !is.na(p_lmm)) %>%
+    distinct(gene_id, .keep_all = TRUE)
+tmpr_r <- with(tmpr, cor(p_lm, p_lmm)) %>% signif(4)
+
+ggplot(tmpr, aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    ggtitle("GEMMA p-value comparison (shuffled)",
+            subtitle = str_glue("R = {tmpr_r}, n = {nrow(tmpr)}"))
+```
+
+
+```{r}
+ggplot(d_rand, aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    scale_x_log10() +
+    scale_y_log10() +
+    ggtitle("GEMMA p-value comparison:\nrandom variant per gene",
+            subtitle = str_glue("R = {d_rand_r}, n = {nrow(d_rand)}"))
+
+ggplot(d_rand, aes(x = p_lm)) +
+    geom_histogram(bins = 100) +
+    expand_limits(y = 260)
+
+```
+
+```{r}
+d_r_rand_r <- with(d_r_rand, cor(p_lm, p_lmm)) %>% signif(4)
+
+p1 <- ggplot(d_r_rand, aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    scale_x_log10() +
+    scale_y_log10() +
+    ggtitle("GEMMA p-values (shuffled):\nrandom variant per gene",
+            subtitle = str_glue("R = {d_r_rand_r}, n = {nrow(d_r_rand)}")) +
+    # Match limits approximately with non-shuffled version:
+    expand_limits(x = 1e-21, y = 1e-21)
+
+p2 <- ggplot(d_r_rand, aes(x = p_lm)) +
+    geom_histogram(bins = 100) +
+    expand_limits(y = 260)
+
+p3 <- ggplot(d_r_rand, aes(x = p_lmm)) +
+    geom_histogram(bins = 100) +
+    expand_limits(y = 260)
+
+p1 + (p2 / p3)
+# ggsave("rand_rand_pvalues.png", width = 7, height = 4)
+```
+
+
+## With covariates
+
+LMM with covariates was taking too long, so I only have chr11:
+
+```{r}
+p1 <- ggplot(d_c_rand, aes(x = p_lm)) +
+    geom_histogram(bins = 100) +
+    expand_limits(y = 11)
+
+p2 <- ggplot(d_c_rand, aes(x = p_lmm)) +
+    geom_histogram(bins = 100) +
+    expand_limits(y = 11)
+
+p1 / p2
+```
+
+```{r}
+d_c_rand %>%
+    ggplot(aes(x = p_lm, y = p_lmm)) +
+    geom_point(size = 1, alpha = 0.3) +
+    scale_x_log10() +
+    scale_y_log10() +
+    ggtitle("GEMMA with covariates, chr11")
+```
+
+```{r}
+# tmpc <- d_c_rand %>%
+#     filter(!is.na(p_lm_x) & !is.na(p_lm_y))
+# tmpc_r <- with(tmpc, cor(p_lm_x, p_lm_y)) %>% signif(4)
+# 
+# ggplot(tmpc, aes(x = p_lm_x, y = p_lm_y)) +
+#     geom_point(size = 1, alpha = 0.3) +
+#     ggtitle("GEMMA p-value comparison (shuffled)",
+#             subtitle = str_glue("R = {tmpc_r}, n = {nrow(tmpc)}"))
+```
+

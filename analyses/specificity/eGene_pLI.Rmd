@@ -1,0 +1,154 @@
+---
+title: "eGene pLI"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+
+pli <- read_tsv("data/human/forweb_cleaned_exac_r03_march16_z_data_pLI.txt.gz",
+                col_types = "-c-----------------d")
+
+rat <- read_tsv("data/eqtls/top_assoc.txt", col_types = "cc-------------d--") |>
+    group_by(gene_id) |>
+    summarise(eqtl_rat = any(qval < 0.05),
+              tissues_rat = sum(qval < 0.05),
+              .groups = "drop")
+
+gtex <- list.files("data/gtex/GTEx_Analysis_v8_eQTL", pattern = "*Brain_*",
+                   full.names = TRUE) |>
+    read_tsv(id = "file",
+             col_types = cols(gene_id = "c", gene_name = "c", qval = "d", .default = "-")) |>
+    mutate(gene_id = str_replace(gene_id, "\\..+$", "")) |>
+    group_by(gene_id, gene_name) |>
+    summarise(eqtl_gtex = any(qval <= 0.05),
+              tissues_gtex = sum(qval <= 0.05),
+              .groups = "drop")
+
+d <- read_tsv("data/gtex/orthologs.txt", col_types = "cc") |>
+    mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", "")) |>
+    inner_join(rat, by = c("gene_id_rat" = "gene_id")) |>
+    inner_join(gtex, by = c("gene_id_human" = "gene_id")) |>
+    inner_join(pli, by = c("gene_name" = "gene")) |>
+    mutate(
+        eqtl = case_when(
+            eqtl_rat & !eqtl_gtex ~ "Rat",
+            !eqtl_rat & eqtl_gtex ~ "GTEx",
+            eqtl_rat & eqtl_gtex ~ "Both",
+            !eqtl_rat & !eqtl_gtex ~ "Neither",
+        ) |>
+            fct_relevel("Both", "GTEx", "Rat")
+    )
+
+# expr <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
+#     group_by(tissue) |>
+#     summarise(
+#         read_tsv(str_glue("data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
+#                  col_types = cols(`#chr` = "-", start = "-", end = "-",
+#                                   gene_id = "c", .default = "d")) |>
+#             pivot_longer(-gene_id, names_to = "rat_id", values_to = "expr"),
+#         .groups = "drop"
+#     ) |>
+#     group_by(gene_id) |>
+#     summarise(median_expr = median(expr))
+expr <- read_tsv("data/expression/medianGeneExpression.txt.gz", col_types = "cddddddddd") |>
+    pivot_longer(-geneId, names_to = "tissue", values_to = "tpm") |>
+    filter(tissue %in% c("IL", "LHb", "NAcc", "OFC", "PL")) |>
+    rename(gene_id = geneId) |>
+    group_by(gene_id) |>
+    summarise(n_expr = sum(tpm > 1), .groups = "drop") |>
+    filter(n_expr == 5)
+```
+
+```{r}
+d |>
+    ggplot(aes(x = eqtl, y = pLI)) +
+    geom_violin(fill = "grey") +
+    geom_boxplot(width = 0.05) +
+    xlab("Gene has an eQTL in any tissue from...")
+
+with(d, table(eqtl))
+```
+
+```{r}
+d |>
+    group_by(tissues_rat, tissues_gtex) |>
+    summarise(mean_pLI = mean(pLI),
+              n = n(),
+              .groups = "drop") |>
+    ggplot(aes(x = tissues_rat, y = tissues_gtex, fill = mean_pLI, label = n)) +
+    geom_tile() +
+    geom_text(color = "white") +
+    scale_fill_viridis_c() +
+    ggtitle("Genes (ortho pairs) grouped by # of tissues w/ eQTL",
+            subtitle = "Tiles are labeled with gene count")
+```
+
+pLI isn't highest for 0-eQTL genes. Is it because the mean is dragged down by genes with regulatory variation but have low expression so eQTLs aren't detected?
+
+Maybe so, though note that the mean for 0 rat eQTLs is already the highest overall:
+
+```{r}
+# d |>
+#     left_join(expr, by = c("gene_id_rat" = "gene_id")) |>
+#     ggplot(aes(x = mean_expr, y = pLI)) +
+#     facet_wrap(~ tissues_rat) +
+#     geom_point(size = 1)
+
+d |>
+    mutate(tissues_rat = as.factor(tissues_rat)) |>
+    # left_join(expr, by = c("gene_id_rat" = "gene_id")) |>
+    ggplot(aes(x = tissues_rat, fill = gene_id_rat %in% expr$gene_id, y = pLI)) +
+    # facet_wrap(~ tissues_rat) +
+    geom_boxplot()
+```
+
+Removing genes with median rat TPM < 1 in all tissues:
+
+```{r}
+d |>
+    # left_join(expr, by = c("gene_id_rat" = "gene_id")) |>
+    filter(gene_id_rat %in% expr$gene_id) |>
+    group_by(tissues_rat, tissues_gtex) |>
+    summarise(mean_pLI = mean(pLI),
+              n = n(),
+              .groups = "drop") |>
+    ggplot(aes(x = tissues_rat, y = tissues_gtex, fill = mean_pLI, label = n)) +
+    geom_tile() +
+    geom_text(color = "white") +
+    scale_fill_viridis_c() +
+    ggtitle("Genes (ortho pairs) grouped by # of tissues w/ eQTL",
+            subtitle = "Tiles are labeled with gene count")
+```
+
+Mean +/- SE instead of boxplots, filtered out low-expressed genes, and include genes that were tested in only one species:
+
+```{r}
+d2 <- read_tsv("data/gtex/orthologs.txt", col_types = "cc") |>
+    mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", "")) |>
+    left_join(rat, by = c("gene_id_rat" = "gene_id")) |>
+    left_join(gtex, by = c("gene_id_human" = "gene_id")) |>
+    inner_join(pli, by = c("gene_name" = "gene")) |>
+    mutate(
+        eqtl = case_when(
+            eqtl_rat & !eqtl_gtex ~ "Rat",
+            !eqtl_rat & eqtl_gtex ~ "GTEx",
+            eqtl_rat & eqtl_gtex ~ "Both",
+            !eqtl_rat & !eqtl_gtex ~ "Neither",
+        ) |>
+            fct_relevel("Both", "GTEx", "Rat")
+    )
+
+d |>
+    # left_join(expr, by = c("gene_id_rat" = "gene_id")) |>
+    filter(gene_id_rat %in% expr$gene_id) |>
+    group_by(eqtl) |>
+    summarise(mean_pLI = mean(pLI),
+              SE_pLI = sd(pLI) / sqrt(length(pLI)),
+              n = n(),
+              .groups = "drop") |>
+    ggplot(aes(x = eqtl, y = mean_pLI, ymin = mean_pLI - SE_pLI, ymax = mean_pLI + SE_pLI)) +
+    geom_pointrange() +
+    xlab("Gene has an eQTL in any tissue from...")
+```
+

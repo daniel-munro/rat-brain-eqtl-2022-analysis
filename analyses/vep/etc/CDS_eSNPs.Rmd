@@ -1,0 +1,39 @@
+---
+title: "CDS eSNPs"
+output: html_notebook
+---
+
+Which cis-eSNPs fall within CDS?
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+vep <- read_tsv("../data/vep.txt.gz", comment = "##", na = "-",
+                col_types = "c--cc-c--icc-c") %>%
+    filter(!is.na(Protein_position)) %>%
+    rename(variant_id = `#Uploaded_variation`) %>%
+    # distinct() # Sometimes multiple transcripts are listed for the same gene.
+    distinct(variant_id, .keep_all = TRUE)
+
+eqtls <- read_tsv("../data/eqtls.txt", col_types = "ccciiddddd") %>%
+    dplyr::filter(qval < 0.05,
+                  code == "ACCT") %>%
+    # mutate(variant_id = str_replace(variant_id, "chr", ""))
+    left_join(vep, by = "variant_id")
+
+# # Oops, I already got this info from VEP.
+# # Retrieve conversion when eQTLs are updated:
+# library(ensembldb)
+# ah <- AnnotationHub::AnnotationHub()
+# # AnnotationHub::query(ah, c("EnsDb", "norvegicus"))
+# edb <- ah[["AH83318"]] # Ensembl 101 EnsDb for Rattus norvegicus
+# grn <- GRanges(unique(eqtls$variant_id)[1:300])
+# names(grn) <- unique(eqtls$variant_id)[1:300]
+# prot <- genomeToProtein(grn, edb)
+# x <- as.data.frame(unlist(prot))[c("start", "names", "seq_start", "seq_name")] %>%
+#     dplyr::filter(names != "")
+# # How to also get codon mutation?
+```
+

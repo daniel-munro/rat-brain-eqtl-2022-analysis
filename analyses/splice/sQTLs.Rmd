@@ -1,0 +1,63 @@
+---
+title: "Splice QTLs"
+output: html_notebook
+---
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+top_assoc <- read_tsv("../../data/splice/top_assoc_splice.txt", col_types = "ccicciidddddcii")
+
+sqtls <- read_tsv("../../data/splice/sqtls_indep.txt", col_types = "cciccicdddddcii")
+
+sgenes <- sqtls |>
+    distinct(tissue, group_id) |>
+    rename(gene_id = group_id)
+```
+
+```{r}
+nrow(sqtls)
+
+count(sqtls, rank)
+
+# sqtls |>
+#     ggplot(aes(x = tss_distance)) +
+#     geom_histogram(bins = 50)
+```
+
+```{r}
+sgenes |>
+    mutate(tissue = fct_infreq(tissue) |> fct_rev()) |> # to match upset plot order
+    ggplot(aes(x = tissue)) +
+    geom_bar() +
+    xlab(NULL) +
+    ylab("sGenes (5% FDR)") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
+
+# ggsave("sGene_count.png", width = 1.5, height = 2.5)
+```
+
+```{r}
+tmp <- sgenes |>
+    group_by(gene_id) |>
+    summarise(n_tissues = n()) |>
+    ungroup() |>
+    count(n_tissues)
+ggplot(tmp, aes(x = n_tissues, y = n, fill = n_tissues)) +
+    geom_col(show.legend = FALSE) +
+    scale_fill_viridis_c() +
+    xlab("No. tissues") +
+    ylab("sGenes (5% FDR)") +
+    theme_minimal() +
+    theme(panel.grid.minor.x = element_blank())
+
+# ggsave("sGene_count_by_n_tissues.png", width = 1.5, height = 2.5)
+```
+
+```{r}
+n_distinct(sgenes$gene_id)
+
+count(sqtls, tissue, sort = TRUE)
+```
+

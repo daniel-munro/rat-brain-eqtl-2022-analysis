@@ -1,0 +1,115 @@
+---
+title: "Expression comparisons"
+author: "Daniel Munro"
+date: "8/5/2020"
+output: html_document
+---
+
+Do the gene expression profiles cluster by brain region? Here is PCA using log2(count + 1) values:
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(Rtsne)
+library(umap)
+
+run_pca <- function(df) {
+    pca <- prcomp(df, scale. = TRUE)
+    pca$x[, 1:2] |>
+        as_tibble(rownames = "sample")
+}
+
+run_tsne <- function(df) {
+    pca <- prcomp(df, scale. = TRUE)
+    tsne <- Rtsne(pca$x[, 1:50], pca = FALSE)
+    tibble(sample = rownames(df),
+           tSNE1 = tsne$Y[, 1],
+           tSNE2 = tsne$Y[, 2])
+}
+
+run_umap <- function(df) {
+    um <- umap(df)
+    tibble(sample = rownames(um$layout),
+           UMAP1 = um$layout[, 1],
+           UMAP2 = um$layout[, 2])
+}
+```
+
+```{r}
+covar <- read_csv("../data/DemographicInfo_TN_RNASeq_88_LauraSaba.csv",
+                  col_types = cols(rat_rfid = "c", batchnumber = "c",
+                                   sex_mf = "c", .default = "-")) |>
+    mutate(rat_id = toupper(rat_rfid))
+
+expr <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
+    group_by(tissue) |>
+    summarise(
+        read_tsv(str_glue("../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
+                 col_types = cols(`#chr` = "-", start = "-", end = "-",
+                                  gene_id = "c", .default = "d")) |>
+            pivot_longer(-gene_id, names_to = "rat_id", values_to = "expr"),
+        .groups = "drop"
+    ) |>
+    group_by(gene_id) |>
+    filter(n_distinct(tissue) == 5) |>
+    ungroup() |>
+    pivot_wider(c(rat_id, tissue), names_from = gene_id, values_from = expr)
+expr_df <- expr |>
+    select(-rat_id, -tissue) |>
+    as.data.frame()
+rownames(expr_df) <- str_c(expr$rat_id, expr$tissue, sep="_")
+
+comps <- run_pca(expr_df) |>
+    left_join(run_tsne(expr_df), by = "sample") |>
+    left_join(run_umap(expr_df), by = "sample") |>
+    separate(sample, c("rat_id", "tissue"), sep = "_") |>
+    left_join(covar, by = "rat_id")
+```
+
+```{r}
+ggplot(comps, aes(x = PC1, y = PC2, color = tissue)) +
+    geom_point(size = 0.5)
+```
+
+```{r}
+ggplot(comps, aes(x = PC1, y = PC2, color = batchnumber)) +
+    geom_point(size = 0.5)
+```
+
+NAcc and LHb samples form separate clusters far from the other three. I'll try t-SNE.
+
+```{r}
+ggplot(comps, aes(x = tSNE1, y = tSNE2, color = tissue)) +
+    geom_point(size = 0.5)
+```
+
+```{r}
+ggplot(comps, aes(x = tSNE1, y = tSNE2, color = sex_mf)) +
+    geom_point(size = 0.5)
+```
+
+```{r}
+ggplot(comps, aes(x = tSNE1, y = tSNE2, color = batchnumber)) +
+    geom_point(size = 0.5)
+```
+
+IL and PL are relatively similar and physically close, and OFC is part of the cortex too:
+
+| Code | Name                                   |
+|------|----------------------------------------|
+| IL   | infralimbic cortex                     |
+| LHb  | lateral habenular nucleus              |
+| NAcc | nucleus accumbens, core                |
+| OFC  | ventral orbital + lateral orbital area |
+| PL   | prelimbic cortex                       |
+
+```{r}
+ggplot(comps, aes(x = UMAP1, y = UMAP2, color = tissue)) +
+    geom_point(size = 0.5)
+```
+
+```{r}
+ggplot(comps, aes(x = UMAP1, y = UMAP2, color = batchnumber)) +
+    geom_point(size = 0.5)
+```

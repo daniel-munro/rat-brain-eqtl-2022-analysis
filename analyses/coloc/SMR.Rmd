@@ -1,0 +1,205 @@
+---
+title: "SMR analysis"
+author: "Daniel Munro"
+date: "2/1/2022"
+output: 
+  html_notebook: 
+    code_folding: none
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(tidyverse)
+library(patchwork)
+```
+
+We have 5 rat brain tissues:
+
+- IL (Infralimbic cortex)
+- LHb (Lateral habenula)
+- NAcc (Nucleus accumbens core)
+- OFC (Orbitofrontal cortex)
+- PL (Prelimbic cortex)
+
+We have GWAS scores for 9 rat physiological traits from [Genome-Wide Association Study in 3,173 Outbred Rats Identifies Multiple Loci for Body Weight, Adiposity, and Fasting Glucose](https://onlinelibrary.wiley.com/doi/abs/10.1002/oby.22927).
+
+- bmi_bodylength_w_tail
+- bmi_bodylength_wo_tail
+- bodylength_w_tail
+- bodylength_wo_tail
+- bodyweight
+- epifat
+- fasting_glucose
+- parafat
+- retrofat
+
+Two special considerations:
+
+- The GWAS used pruning ($r^2<0.95$), so they only tested ~120,000 SNPs compared to ~3.5 million unpruned SNPs for eQTLs.
+- With only 88 outbred rats (75-81 per tissue) descending from 8 founder strains, an eQTL often has many (sometimes hundreds of) top tied eSNPs in 100% LD with each other.
+
+To get an eQTL/GWAS z-score pair per eQTL while accounting for these, for each eGene I test the top SNP that was tested in GWAS (breaking tie randomly if needed), even if it wasn't an overall top eSNP.
+
+```{r include = FALSE}
+gwas_dir <- "../data/coloc/adiposity_GWAS/"
+gwas <- tibble(file = list.files(gwas_dir)) |>
+    group_by(file) |>
+    summarise(
+        read_tsv(str_c(gwas_dir, file), col_types = "-c-----dd-----d",
+                 col_names = c("variant_id", "slope", "slope_se", "p_score")),
+        .groups = "drop"
+    ) |>
+    mutate(trait = str_match(file, "allChr_physiological_(.+)\\.assoc\\.txt")[, 2], .before = 1) |>
+    select(-file) |>
+    mutate(z_GWAS = slope / slope_se) |>
+    select(-slope, -slope_se)
+
+eqtls <- read_tsv("../data/eqtls/eqtls_indep.txt", col_types = "cc---c-----ddd---") |>
+    mutate(z_eQTL = slope / slope_se) |>
+    select(-slope, -slope_se)
+
+smr <- read_tsv("SMR.tsv", col_types = "cccdcddd")
+
+sig <- read_tsv("SMR_sig.tsv", col_types = "cccdcddd")
+```
+
+```{r fig.width = 4, fig.height = 1.5}
+p1 <- eqtls |>
+    ggplot(aes(x = z_eQTL)) +
+    geom_histogram(bins = 100) +
+    ggtitle("eQTL top SNP z-scores")
+p2 <- gwas |>
+    ggplot(aes(x = z_GWAS)) +
+    geom_histogram(bins = 100) +
+    ggtitle("All GWAS z-scores")
+p3 <- smr |>
+    ggplot(aes(x = z_GWAS)) +
+    geom_histogram(bins = 100) +
+    ggtitle("GWAS z-scores", subtitle = "for top eQTL SNPs")
+
+p1 + p2 + p3
+```
+
+- For each top eSNP with both z-scores, I calculated the SMR statistic for each trait:
+- I calculated $T_{SMR}$ as $(z_{eQTL}^2 * z_{GWAS}^2) / (z_{eQTL}^2 + z_{GWAS}^2)$
+- I calculated $P_{SMR}$ as `pchisq(T_SMR, df = 1, lower.tail = FALSE)`.
+
+<!-- So for each gene I have an SMR p-value for each tissue where it has an eQTL, for each independent eQTL in cases where there's more than one, for each GWAS trait. -->
+
+All SMR test statistics:
+
+```{r}
+smr |>
+    ggplot(aes(x = T_SMR)) +
+    geom_histogram(bins = 100, boundary = 0) +
+    theme_bw()
+```
+
+SMR test statistics per tissue-trait pair:
+
+```{r fig.width = 7, fig.height = 4}
+smr |>
+    filter(!is.na(T_SMR)) |>
+    ggplot(aes(x = T_SMR)) +
+    facet_grid(rows = vars(tissue), cols = vars(trait)) +
+    geom_histogram(bins = 50, boundary = 0) +
+    theme_bw()
+```
+
+All SMR p-values:
+
+```{r}
+smr |>
+    ggplot(aes(x = p_SMR)) +
+    geom_histogram(bins = 100, boundary = 0)
+```
+
+SMR p-values per tissue-trait pair:
+
+```{r fig.width = 7, fig.height = 4}
+smr |>
+    ggplot(aes(x = p_SMR)) +
+    facet_grid(rows = vars(tissue), cols = vars(trait)) +
+    geom_histogram(bins = 50, boundary = 0)
+```
+
+The traits with bigger low-p-value peaks correspond to the traits with the strongest peaks in the Manhattan plots in the GWAS paper.
+
+## Significant colocalizations
+
+Using significance threshold p_SMR < 0.05/(# of SMR tests), calculated separately per tissue per trait, this many eQTLs have significant colocalization according to SMR:
+
+```{r, rows.print = 25}
+sig |>
+    count(tissue, trait, sort = TRUE)
+```
+
+```{r}
+# genome_pos <- function(chrom, pos) {
+#     pos + cumsum(c(0, chr_len))[chrom]
+# }
+
+manhattan <- function(df, pval_col) {
+    chr_len <- c(282763074, 266435125, 177699992, 184226339, 173707219,
+                 147991367, 145729302, 133307652, 122095297, 112626471,
+                 90463843, 52716770, 114033958, 115493446, 111246239,
+                 90668790, 90843779, 88201929, 62275575, 56205956)
+    # chr_len <- chr_len + 1e7 # Add space between chromosomes
+    label_locs <- cumsum(c(0, chr_len[1:19])) + chr_len / 2
+    df <- df |>
+        mutate(variant_id = str_replace(variant_id, "chr", ""),
+               logp = -log10(!!enquo(pval_col))) |>
+        separate(variant_id, c("chrom", "pos"), sep = ":", convert = TRUE) |>
+        mutate(gpos = pos + cumsum(c(0, chr_len))[chrom],
+               gcolor = as.factor((chrom - 1) %% 2)) |>
+        arrange(gpos)
+    ggplot(df, aes(x = gpos, y = logp, color = gcolor)) +
+        # geom_point(size = 1, show.legend = FALSE) +
+        scale_x_continuous(breaks = label_locs, labels = 1:20, expand = c(0.02, 0)) +
+        scale_y_continuous(limits = c(0, max(df$logp) * 1.05), expand = c(0.005, 0)) +
+        scale_color_manual(values = c("#111111", "#6290BC")) +
+        theme_bw() +
+        theme(
+            panel.grid = element_blank(),
+        ) +
+        xlab("Chromosome") +
+        ylab(expression(-log[10](P)))
+}
+```
+
+```{r}
+eqtls |>
+    # slice_sample(n = 100000) |>
+    manhattan(pval_nominal) +
+    geom_point(aes(color = tissue), size = 1) +
+    scale_color_manual(values = c("#377eb8", "#4daf4a", "#e41a1c", "#ff7f00", "#984ea3")) +
+    ggtitle("cis-eQTL p-values")
+```
+
+```{r}
+gwas |>
+    # slice_sample(n = 100000) |>
+    manhattan(p_score) +
+    geom_point(size = 1, show.legend = FALSE) +
+    ggtitle("GWAS p-values")
+```
+
+```{r}
+smr |>
+    # slice_sample(n = 100000) |>
+    manhattan(p_SMR) +
+    geom_point(size = 1, show.legend = FALSE) +
+    # geom_hline(yintercept = -log10(0.05 / nrow(smr)), color = "red") +
+    ggtitle("SMR p-values")
+```
+
+```{r}
+sig |>
+    manhattan(p_SMR) +
+    geom_point(aes(color = tissue)) +
+    scale_y_continuous() +
+    scale_color_manual(values = c("#377eb8", "#4daf4a", "#e41a1c", "#ff7f00", "#984ea3")) +
+    ggtitle("Significant colocalizations")
+```
+

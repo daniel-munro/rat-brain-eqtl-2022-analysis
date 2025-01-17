@@ -1,0 +1,84 @@
+rule all:
+    input:
+        expand("out_{tissue}/expressions/gene_expression.txt", tissue=["IL", "LHb", "NAcc", "OFC", "PL"])
+
+
+rule afc_input:
+    input:
+        "../../data/eqtls/eqtls_indep.txt"
+    output:
+        "afc.{tissue}.txt"
+    shell:
+        """
+        echo 'gene_id,variant_id,log2_aFC' > {output}
+        grep -E '^{wildcards.tissue}' {input} | \
+            cut -f2,6,17 | \
+            sed 's/\t/,/g' | \
+            sed 's/:/_/' | \
+            sed 's/chr//' \
+            >> {output}
+        """
+## These aFC files now contain top assoc + indep eQTLs, so I can't use them directly.
+# rule afc_input:
+#     input:
+#         "../../data/afc/{code}.aFC.txt"
+#     output:
+#         "afc.{code}.txt"
+#     shell:
+#         """
+#         cut -f1,2,5 {input} | \
+#             sed 's/\t/,/g' | \
+#             sed 's/pid/gene_id/' | \
+#             sed 's/sid/variant_id/' | \
+#             sed 's/:/_/' | \
+#             sed 's/chr//' \
+#             > {output}
+#         """
+
+
+rule vcf:
+    input:
+        "../../data/genotype/P50.rnaseq.88.unpruned.vcf.gz"
+    output:
+        vcf = "geno.vcf.gz",
+        tbi = "geno.vcf.gz.tbi",
+    shell:
+        """
+        zcat < {input} | sed 's/:/_/' | sed 's/chr//' | bgzip > {output.vcf}
+        tabix {output.vcf}
+        """
+
+
+rule gene_expr_pred:
+    input:
+        afc = "afc.{tissue}.txt",
+        vcf = "geno.vcf.gz",
+    output:
+        expr = "out_{tissue}/expressions/gene_expression.txt",
+        ase = "out_{tissue}/expressions/ASE.txt",
+    shell:
+        """
+        python3 ~/br/tools/gene_expr_pred/src/gene_expr_pred.py \
+            --aFC_path {input.afc} \
+            --sep , \
+            --geno GT \
+            --vcf_path {input.vcf} \
+            --variant_max 10 \
+            --output out_{wildcards.tissue}
+        """
+
+#################################
+## Use aFC computed with aFC-n ##
+#################################
+
+rule afcn_expr_input:
+    input:
+        
+
+
+rule afcn:
+    input:
+        vcf = "geno.vcf.gz",
+        expr = ,
+        eqtl = 
+    output:
