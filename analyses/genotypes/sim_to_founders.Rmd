@@ -26,21 +26,21 @@ strains <- c(
 
 probs <- function(prob) {
     names(dimnames(prob)) <- c("individual", "strain", "locus")
-    cubelyr::as.tbl_cube(prob) %>%
+    cubelyr::as.tbl_cube(prob) |>
         as_tibble()
 }
 ```
 
 ```{r}
-sim <- read_tsv("../data/tensorqtl/sim_to_founders.txt",
-                col_types = cols(ID = "c", .default = "d")) %>%
-    pivot_longer(-ID, names_to = "individual", values_to = "similarity") %>%
+sim <- read_tsv("../../data/tensorqtl/sim_to_founders.txt",
+                col_types = cols(ID = "c", .default = "d")) |>
+    pivot_longer(-ID, names_to = "individual", values_to = "similarity") |>
     rename(strain = ID)
 ```
 
 ```{r fig.width=6, fig.height=3}
-sim %>%
-    mutate(strain = fct_rev(strain)) %>%
+sim |>
+    mutate(strain = fct_rev(strain)) |>
     ggplot(aes(x = individual, y = strain, fill = similarity)) +
     geom_tile() +
     theme_minimal() +
@@ -60,21 +60,20 @@ ggplot(sim, aes(x = strain, y = similarity)) +
 Do these match the proportions of haplotype probabilities?
 
 ```{r}
-d <- tibble(chrom = 1:20) %>%
-    group_by(chrom) %>%
-    summarise(
-        readRDS(str_c("../data/analysis/haplotype_probs_chr", chrom, ".rds")) %>%
+d <- tibble(chrom = 1:20) |>
+    reframe(
+        readRDS(str_c("../data/analysis/haplotype_probs_chr", chrom, ".rds")) |>
             probs(),
-        .groups = "drop"
-    ) %>%
-    group_by(individual, strain) %>%
-    summarise(prob = mean(prob), .groups = "drop") %>%
+        .by = chrom
+    ) |>
+    summarise(prob = mean(prob),
+              .by = c(individual, strain)) |>
     mutate(strain = strains[strain])
 ```
 
 ```{r}
-sim %>%
-    left_join(d, by = c("individual", "strain")) %>%
+sim |>
+    left_join(d, by = c("individual", "strain")) |>
     ggplot(aes(x = similarity, y = prob, color = strain)) +
     geom_point() +
     scale_color_brewer(type = "qual", palette = 6) +
@@ -86,29 +85,26 @@ sim %>%
 Yes, the two metrics correlate pretty well for each strain.
 
 ```{r}
-sim %>%
-    left_join(d, by = c("individual", "strain")) %>%
-    group_by(strain) %>%
-    summarise(correlation = cor(similarity, prob), .groups = "drop") %>%
+sim |>
+    left_join(d, by = c("individual", "strain")) |>
+    summarise(correlation = cor(similarity, prob),
+              .by = strain) |>
     arrange(desc(correlation))
 ```
 
 ## PCA
 
 ```{r}
-pca <- sim %>%
+pca <- sim |>
     pivot_wider(id_cols = "individual",
                 names_from = "strain",
-                values_from = "similarity") %>%
-    column_to_rownames("individual") %>%
+                values_from = "similarity") |>
+    column_to_rownames("individual") |>
     prcomp()
-# pca$x %>%
-#     as_tibble(rownames = "individual") %>%
-#     pivot_longer(-individual, names_to = "PC")
 pve <- pca$sdev ^ 2 / sum(pca$sdev ^ 2)
-pve <- pve %>%
+pve <- pve |>
     tibble(PC = 1:length(pve),
-           PVE = pve) %>%
+           PVE = pve) |>
     mutate(cumulative_PVE = cumsum(PVE))
 ```
 

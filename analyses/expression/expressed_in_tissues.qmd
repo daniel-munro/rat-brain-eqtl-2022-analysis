@@ -1,6 +1,11 @@
 ---
 title: "Expression tissue-specificity"
-output: html_notebook
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 How many total genes are expressed in 1-5 tissues? How many genes with eQTLs in N tissues are expressed in 1-N tissues?
@@ -8,44 +13,34 @@ How many total genes are expressed in 1-5 tissues? How many genes with eQTLs in 
 ```{r}
 suppressPackageStartupMessages(library(tidyverse))
 
-eqtls_all <- read_tsv("../data/eqtls.txt", col_types = "ccciiddddd")
-eqtls <- filter(eqtls_all, qval < 0.05)
+top_assoc <- read_tsv("../../data/eqtls/top_assoc.txt", col_types = "ccciiciiccdddddddd")
 
-expr <- tibble(tissue = unique(eqtls$tissue)) %>%
-    group_by(tissue) %>%
-    summarise(
-        read_tsv(str_glue("../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
+expr <- tibble(tissue = unique(top_assoc$tissue)) |>
+    reframe(
+        read_tsv(str_glue("../../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
                  col_types = cols(`#chr` = "-", start = "-", end = "-",
-                                  gene_id = "c", .default = "d")) %>%
+                                  gene_id = "c", .default = "d")) |>
             pivot_longer(-gene_id, names_to = "rat_id", values_to = "expr"),
-        .groups = "drop"
-    ) %>%
-    group_by(tissue, gene_id) %>%
+        .by = tissue
+    ) |>
+    group_by(tissue, gene_id) |>
     summarise(median_expr = median(expr),
               expressed = median_expr > 0,
               frac_nonzero = mean(expr > 0),
-              # expressed = frac_nonzero > 0.75,
               .groups = "drop")
 
-genes <- eqtls_all %>%
-    left_join(expr, by = c("tissue", "gene_id")) %>%
-    group_by(gene_id) %>%
+genes <- top_assoc |>
+    left_join(expr, by = c("tissue", "gene_id")) |>
     summarise(n_tissues = sum(qval < 0.05),
               n_expressed = sum(expressed),
-              .groups = "drop")
+              .by = gene_id)
 
-counts <- genes %>%
+counts <- genes |>
     count(n_tissues, n_expressed)
 ```
 
-```{r}
-# counts %>%
-#     ggplot(aes(x = n_expressed, y = n_tissues, fill = n)) +
-#     geom_tile()
-```
-
 ```{r fig.width=1.5, fig.height=1.2}
-counts %>%
+counts |>
     ggplot(aes(x = n_expressed, y = n, fill = n_tissues)) +
     geom_col() +
     scale_fill_viridis_c() +
@@ -57,27 +52,20 @@ counts %>%
 Plot of number of genes expressed in N tissues at different thresholds to define "expressed", i.e. the fraction of samples with nonzero counts.
 
 ```{r}
-counts_fracs <- tibble(frac = seq(from = 0.5, to = 1, by = 0.05)) %>%
-    group_by(frac) %>%
-    summarise(
-        expr %>%
-            mutate(expressed = frac_nonzero >= unique(frac)) %>%
-            group_by(gene_id) %>%
+counts_fracs <- tibble(frac = seq(from = 0.5, to = 1, by = 0.05)) |>
+    reframe(
+        expr |>
+            mutate(expressed = frac_nonzero >= unique(frac)) |>
+            group_by(gene_id) |>
             summarise(n_expressed = sum(expressed),
-                      .groups = "drop") %>%
+                      .groups = "drop") |>
             count(n_expressed),
-        .groups = "drop"
+        .by = frac
     )
 ```
 
 ```{r}
-# counts_fracs %>%
-#     ggplot(aes(x = frac, y = n_expressed, fill = n)) +
-#     geom_tile()
-```
-
-```{r}
-counts_fracs %>%
+counts_fracs |>
     ggplot(aes(x = frac, y = n, fill = n_expressed)) +
     geom_col() +
     scale_fill_viridis_c(option = "A", direction = 1, end = 0.9) +
@@ -85,3 +73,4 @@ counts_fracs %>%
     ylab("Genes") +
     theme_minimal()
 ```
+

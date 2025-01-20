@@ -7,8 +7,6 @@ output: html_document
 
 I'm doing all-vs-all association testing. I pruned SNPs to LD <= 0.9, resulting in 30,271 tested SNPs. I've kept only pairs with p-values < 1e-3.
 
-<!-- For now I ran GEMMA for genes on the four chromosomes with the fewest genes (11, 15, 17, 18), for a total of 1873 genes. -->
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 ```
@@ -16,12 +14,12 @@ knitr::opts_chunk$set(echo = FALSE)
 ```{r}
 suppressPackageStartupMessages(library(tidyverse))
 
-genes <- read_tsv("~/br/data/genes.txt", col_types = "c-c---i-----") |>
+genes <- read_tsv("../../data/genes.txt", col_types = "c-c---i-----") |>
     rename(gene_chrom = chrom)
 
-top_lm <- read_tsv("~/br/data/gemma/trans/Acbc.lm.assoc.txt.gz", col_types = "c-c--------d")
+top_lm <- read_tsv("../../data/gemma/trans/Acbc.lm.assoc.txt.gz", col_types = "c-c--------d")
 
-top_lmm <- read_tsv("~/br/data/gemma/trans/Acbc.lmm.assoc.txt.gz", col_types = "c-c----------d--")
+top_lmm <- read_tsv("../../data/gemma/trans/Acbc.lmm.assoc.txt.gz", col_types = "c-c----------d--")
 
 top <- full_join(
     top_lm |> rename(p_lm = p_wald),
@@ -48,7 +46,6 @@ top |>
     slice(1) |>
     ungroup() |>
     mutate(tss_distance = (pos - tss) / 1e6) |>
-    # filter(abs(tss_distance) < 1) |>
     ggplot(aes(x = tss_distance)) +
     geom_histogram(bins = 50) +
     xlab("TSS distance (Mb)") +
@@ -132,29 +129,10 @@ top2 |>
 I don't think I can correctly plot QQ against theoretical without full p-value distributions. But I can plot them against each other to compare their distributions.
 
 ```{r}
-# top2 %>%
-#     ggplot(aes(sample = p_lmm)) +
-#     geom_qq(distribution = qunif)
-# 
-# top2 %>%
-#     ggplot(aes(sample = -log10(p_lmm))) +
-#     geom_qq(distribution = \(p) -log10(qunif(p)))
-# 
-# tmp <- top2 %>%
-#     summarise(observed = -log10(sort(p_lm)),
-#               expected = -log10(ppoints(length(p_lm)) / 1e3))
-# ggplot(tmp, aes(x = expected, y = observed)) +
-#     geom_point() +
-#     geom_abline(slope = 1, intercept = 0) +
-#     coord_fixed(xlim = c(0, max(c(tmp$observed, tmp$expected))),
-#                 ylim = c(0, max(c(tmp$observed, tmp$expected)))) +
-#     theme_minimal()
-
-tmp <- top2 %>%
-    group_by(type) %>%
-    summarise(lm = -log10(sort(p_lm)),
-              lmm = -log10(sort(p_lmm)),
-              .groups = "drop")
+tmp <- top2 |>
+    reframe(lm = -log10(sort(p_lm)),
+            lmm = -log10(sort(p_lmm)),
+            .by = type)
 ggplot(tmp, aes(x = lm, y = lmm)) +
     facet_wrap(~ type) +
     geom_point(size = 0.5) +
@@ -167,27 +145,14 @@ ggplot(tmp, aes(x = lm, y = lmm)) +
 Those are for associations where LM and LMM have p<1e-3, which could be considered selecting against disparate p-values. Comparing the sets of LM and LMM p-values < 1e-3, which are of different size and thus require interpolation/subsampling for one set:
 
 ```{r}
-# # Interpolate LMM values:
-# tmp <- top %>%
-#     group_by(type) %>%
-#     summarise(lm = -log10(sort(p_lm[!is.na(p_lm)])),
-#               lmm = -log10(quantile(p_lmm[!is.na(p_lmm)], ppoints(sum(!is.na(p_lm))))),
-#               .groups = "drop")
-# # Interpolate LM values:
-# tmp <- top %>%
-#     group_by(type) %>%
-#     summarise(lmm = -log10(sort(p_lmm[!is.na(p_lmm)])),
-#               lm = -log10(quantile(p_lm[!is.na(p_lm)], ppoints(sum(!is.na(p_lmm))))),
-#               .groups = "drop")
 # Subsample LMM values:
-tmp <- top %>%
+tmp <- top |>
     mutate(type = fct_recode(type,
                              "Proximal SNP-gene pairs" = "cis",
                              "Distal SNP-gene pairs" = "trans")) |>
-    group_by(type) %>%
-    summarise(lm = -log10(sort(p_lm[!is.na(p_lm)])),
-              lmm = -log10(sort(sample(p_lmm[!is.na(p_lmm)], sum(!is.na(p_lm))))),
-              .groups = "drop")
+    reframe(lm = -log10(sort(p_lm[!is.na(p_lm)])),
+            lmm = -log10(sort(sample(p_lmm[!is.na(p_lmm)], sum(!is.na(p_lm))))),
+            .by = type)
 ggplot(tmp, aes(x = lm, y = lmm)) +
     facet_wrap(~ type) +
     geom_abline(slope = 1, intercept = 0, size = 0.5, color = "red", lty = 2) +
@@ -199,6 +164,6 @@ ggplot(tmp, aes(x = lm, y = lmm)) +
     ylab(expression(-log[10]*"P, linear mixed model"))
 
 # Now plot this figure using random associations in another script.
-# ggsave("gemma_fig_QQ.png", width = 5.2, height = 3, bg = "white")
+# ggsave("gemma_trans_QQ.png", width = 5.2, height = 3, bg = "white")
 ```
 

@@ -16,8 +16,6 @@ load_geno <- function(chrom, start, end) {
 
 ## LD across whole chromosome
 
-# geno <- load_geno("1", 1, 3e6)[, 1:1000]  # First 1000 chr1 SNPs
-# geno <- load_geno("1", 1, 536870912)      # For every nth chr1 snp
 geno <- load_geno("12", 1, 536870912)     # For every nth chr12 snp
 all_snps <- colnames(geno)
 geno <- geno[, apply(geno, 2, var) != 0]
@@ -36,7 +34,6 @@ d_ld |>
     ggplot(aes(x = as.factor(pos.x), y = as.factor(pos.y), fill = LD)) +
     geom_tile() +
     scale_fill_gradient(low = "white", high = "black", limits = c(0.2, 1)) +
-    # scale_fill_viridis_c(direction = -1, option = "A") +
     coord_fixed() +
     xlab(NULL) +
     ylab(NULL) +
@@ -44,7 +41,7 @@ d_ld |>
     theme(panel.grid = element_blank(),
           axis.text = element_blank())
 
-ggsave("genotypes/LD_top.png", width = 4, height = 4, dpi = 300)
+ggsave("analyses/genotypes/LD_top.png", width = 4, height = 4, dpi = 300)
 
 ## Links from whole-chromosome heatmap to chromosome
 
@@ -54,18 +51,16 @@ tibble(pos = as.integer(str_split(all_snps, ":", simplify = TRUE)[, 2])) |>
     ggplot(aes(x = pos, xend = rank * (max(pos) / max(rank)), y = 0, yend = 1)) +
     geom_segment(size = 0.01, color = "#aaaacc") +
     ylab(NULL) +
-    # xlab("chr12 position (Mb)") +
     xlab(NULL) +
     theme_minimal() +
     theme(panel.grid = element_blank(),
           axis.text = element_blank())
 
-ggsave("genotypes/LD_middle.png", width = 4, height = 1, dpi = 300, bg = "white")
+ggsave("analyses/genotypes/LD_middle.png", width = 4, height = 1, dpi = 300, bg = "white")
 
 ## LD for first 1000 SNPs on chromosome or first 2 Mb
 
 geno2 <- load_geno("12", 1, 2e6)
-# geno2 <- geno2[, apply(geno2, 2, var) != 0][, 1:1000]
 ld2 <- cor(geno2) ^ 2
 
 d_ld2 <- ld2 |>
@@ -76,10 +71,8 @@ d_ld2 <- ld2 |>
 
 d_ld2 |>
     filter(pos.x >= pos.y) |>
-    # mutate(LD = pmax(0.2, LD)) |>
     ggplot(aes(x = as.factor(pos.x), y = as.factor(pos.y), fill = LD)) +
     geom_tile() +
-    # scale_fill_gradient(low = "white", high = "black", limits = c(0.2, 1)) +
     scale_fill_viridis_c(direction = -1, option = "A", limits = c(-0.001, 1)) +
     coord_fixed() +
     xlab(NULL) +
@@ -88,7 +81,7 @@ d_ld2 |>
     theme(panel.grid = element_blank(),
           axis.text = element_blank())
 
-ggsave("genotypes/LD_bottom.png", width = 4, height = 4, dpi = 300)
+ggsave("analyses/genotypes/LD_bottom.png", width = 4, height = 4, dpi = 300)
 
 ## Links from segment heatmap to chromosome
 
@@ -103,7 +96,7 @@ tibble(pos = unique(d_ld2$pos.x)) |>
     theme(panel.grid = element_blank(),
           axis.text = element_blank())
 
-ggsave("genotypes/LD_middle2.png", width = 4, height = 0.7, dpi = 300, bg = "white")
+ggsave("analyses/genotypes/LD_middle2.png", width = 4, height = 0.7, dpi = 300, bg = "white")
 
 ##########################################
 ## Simplified LD plot: first cis-window ##
@@ -126,10 +119,8 @@ d_ld <- ld |>
 
 d_ld |>
     filter(pos.x >= pos.y) |>
-    # mutate(LD = pmax(0.2, LD)) |>
     ggplot(aes(x = as.factor(pos.x), y = as.factor(pos.y), fill = r2)) +
     geom_tile() +
-    # scale_fill_gradient(low = "white", high = "black", limits = c(0.2, 1)) +
     scale_fill_viridis_c(direction = -1, option = "A", limits = c(-0.001, 1)) +
     coord_fixed() +
     xlab(NULL) +
@@ -139,4 +130,4 @@ d_ld |>
     theme(panel.grid = element_blank(),
           axis.text = element_blank())
 
-ggsave("genotypes/LD_ciswindow.png", width = 4, height = 4, dpi = 300)
+ggsave("analyses/genotypes/LD_ciswindow.png", width = 4, height = 4, dpi = 300)

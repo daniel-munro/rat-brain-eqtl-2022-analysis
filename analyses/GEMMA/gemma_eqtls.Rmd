@@ -13,19 +13,19 @@ library(patchwork)
 ```
 
 ```{r}
-top_lm <- read_tsv("../data/gemma/NAcc.lm.assoc.txt.gz",
+top_lm <- read_tsv("../../data/gemma/NAcc.lm.assoc.txt.gz",
                    col_types = "c-c--------d") |>
     group_by(gene_id) |>
     sample_n(1) |>
     ungroup()
 
-top_lmm <- read_tsv("../data/gemma/NAcc.lmm.assoc.txt.gz",
+top_lmm <- read_tsv("../../data/gemma/NAcc.lmm.assoc.txt.gz",
                     col_types = "c-c----------d--") |>
     group_by(gene_id) |>
     sample_n(1) |>
     ungroup()
 
-pve <- read_tsv("../data/gemma/NAcc.grm_pve.pve.txt", col_types = "cdd")
+pve <- read_tsv("../../data/gemma/NAcc.grm_pve.pve.txt", col_types = "cdd")
 
 top <- full_join(
     top_lm |> select(gene_id, p_lm = p_wald),
@@ -44,7 +44,6 @@ p1 <- ggplot(top, aes(x = p_lm, y = p_lmm)) +
             subtitle = str_glue("R = {top_r}, n = {nrow(top)}")) +
     xlab("p-value, fixed effects model") +
     ylab("p-value, linear mixed model")
-# p1
 
 top2_r <- with(top, cor(log10(p_lm), log10(p_lmm))) |> signif(4)
 p2 <- top |>
@@ -57,7 +56,6 @@ p2 <- top |>
             subtitle = str_glue("R = {top2_r}, n = {nrow(top)}")) +
     xlab("log10(p-value), fixed effects model") +
     ylab("log10(p-value), linear mixed model")
-# p2
 
 p1 + p2
 # ggsave("lm_lmm_pvalues.png", width = 7.5, height = 4.2)
@@ -87,7 +85,6 @@ p2 <- tmp |>
     geom_col(position = "fill", width = 0.02, show.legend = FALSE) +
     scale_x_log10() +
     scale_fill_manual(values = c("#ff5555", "#aa55aa", "#5555ff")) +
-    # xlab("p-value threshold") +
     xlab(NULL) +
     ylab("Proportion of eGenes") +
     theme_minimal()
@@ -101,7 +98,6 @@ p1 / p2
 p3_r <- with(top, cor(log10(p_lm), log10(p_lmm))) |> signif(4)
 # Colors obtained from viridisLite::viridis(5):
 p3_cols <- c("#440154FF", "#440154FF", "#3B528BFF", "#21908CFF", "#5DC863FF", "#FDE725FF")
-# p3_vals <- scales::rescale(c(min(top$pve), (0:4) * max(top$pve) / 4))
 p3_vals <- scales::rescale(c(min(top$pve), c(0, 0.1, 0.4, 0.7, 1) * max(top$pve)))
 p3 <- top |>
     mutate(log10p_lm = -log10(p_lm),
@@ -109,15 +105,11 @@ p3 <- top |>
     slice_sample(prop = 1L, replace = FALSE) |>
     ggplot(aes(x = log10p_lm, y = log10p_lmm, color = pve)) +
     geom_point(size = 0.25) +
-    # scale_color_viridis_c(limits = c(0, NA)) +
-    # scale_color_viridis_c(limits = c(0, NA), oob = scales::squish) +
-    # scale_color_gradient2(low = "red", mid = "gray", high = "blue") +
     scale_color_gradientn(colors = p3_cols, values = p3_vals) +
     annotate("text", x = 2, y = 23, hjust = 0,
              label = str_glue("R = {p3_r}\nn = {nrow(top)}")) +
     theme_minimal() +
     labs(color = expression(PVE[GRM])) +
-    # ggtitle("p-values using LM vs. LMM (Acbc)") +
     xlab(expression(-log[10]*"(p-value), fixed effects model")) +
     ylab(expression(-log[10]*"(p-value), linear mixed model"))
 p3
@@ -133,7 +125,6 @@ p4 <- tmp |>
 
 p3 / p4 + plot_layout(heights = c(2, 1))
 
-# # ggsave("eGene_overlap2.png", width = 8, height = 3.5)
 # ggsave("eGene_overlap2.png", width = 5, height = 5.5)
 ```
 
@@ -170,7 +161,7 @@ top |>
            p_lm_lmm_equal = (p_lmm - p_lm) / p_lm < 1e-4) |>
     ggplot(aes(x = pve_rank, y = pve, ymin = pve - se_pve, ymax = pve + se_pve,
                color = p_lm_lmm_equal)) +
-    geom_linerange(color = "gray", size = 0.1) +
+    geom_linerange(color = "gray", linewidth = 0.1) +
     geom_point(size = 0.2) +
     geom_hline(yintercept = 0, lty = 3, size = 0.25) +
     theme_minimal()
@@ -206,8 +197,10 @@ with(tmp, wilcox.test(pve[eGene == "both"],
 
 ```{r}
 tmp <- top |>
-    summarise(lm = sort(p_lm),
-              lmm = sort(p_lmm))
+    reframe(
+        tibble(lm = sort(p_lm),
+               lmm = sort(p_lmm))
+    )
 ggplot(tmp, aes(x = lm, y = lmm)) +
     geom_point(size = 0.5) +
     geom_abline(slope = 1, intercept = 0, size = 0.5, color = "red", lty = 2) +
@@ -218,8 +211,10 @@ ggplot(tmp, aes(x = lm, y = lmm)) +
     ylab("P LMM")
 
 tmp <- top |>
-    summarise(lm = -log10(sort(p_lm)),
-              lmm = -log10(sort(p_lmm)))
+    reframe(
+        tibble(lm = -log10(sort(p_lm)),
+               lmm = -log10(sort(p_lmm)))
+    )
 ggplot(tmp, aes(x = lm, y = lmm)) +
     geom_point(size = 0.5) +
     geom_abline(slope = 1, intercept = 0, size = 0.5, color = "red", lty = 2) +

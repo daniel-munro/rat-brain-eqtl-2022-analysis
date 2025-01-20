@@ -1,6 +1,12 @@
 ---
 title: "gene_expr_pred"
-output: html_notebook
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 I used `gene_expr_pred` to predict expression on the full NAcc dataset, which was also used to compute the aFC values (i.e. training and testing on the same data for now).
@@ -10,39 +16,33 @@ suppressPackageStartupMessages(library(tidyverse))
 
 tissues <- c("IL", "LHb", "NAcc", "OFC", "PL")
 
-# pred <- read_tsv("gene_expr_pred/out_NQCT/expressions/gene_expression.txt",
-#                  col_types = cols(gene_id = "c", .default = "d")) |>
-#     pivot_longer(-gene_id, names_to = "sample", values_to = "prediction")
 pred <- tibble(tissue = tissues) |>
-    group_by(tissue) |>
-    summarise(
-        read_tsv(str_glue("gene_expr_pred/out_{tissue}/expressions/gene_expression.txt"),
+    reframe(
+        read_tsv(str_glue("../../data/expr_var_explained/gene_expr_pred/out_{tissue}/expressions/gene_expression.txt"),
                  col_types = cols(gene_id = "c", .default = "d")) |>
             pivot_longer(-gene_id, names_to = "sample", values_to = "prediction"),
-        .groups = "drop"
+        .by = tissue
     )
 
 expr <- tibble(tissue = tissues) |>
-    group_by(tissue) |>
-    summarise(
-        read_tsv(str_glue("../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
+    reframe(
+        read_tsv(str_glue("../../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
                  col_types = cols(`#chr` = "-", start = "-", end = "-",
                                   gene_id = "c", .default = "d")) |>
             pivot_longer(-gene_id, names_to = "sample", values_to = "expression"),
-        .groups = "drop"
+        .by = tissue
     ) |>
     inner_join(pred, by = c("tissue", "gene_id", "sample"))
 
 corrs <- expr |>
-    group_by(tissue, gene_id) |>
-    summarise(
+    reframe(
         corr = if (sd(prediction) == 0) NA else cor(expression, prediction),
         R2 = 1 - var(prediction - expression) / var(expression), # From Nava
-        .groups = "drop"
+        .by = c(tissue, gene_id)
     ) |>
     arrange(tissue, desc(R2))
 
-write_tsv(corrs, "expr_R2.tsv")
+write_tsv(corrs, "../../data/expr_var_explained/expr_R2.tsv")
 ```
 
 ```{r}
@@ -76,49 +76,14 @@ expr |>
 I got variance explained values from Nava for GTEx Adipose tissue.
 
 ```{r}
-## These are actually heritability:
-# human <- read_tsv(
-#     "~/Dropbox (Scripps Research)/Pej_H2_Comparisons/01_Data/FromNava/expression_variance/variance_predicted_expression.txt",
-#     col_types = "cd"
-# ) |>
-#     filter(!is.na(WHLBLD))
-# human2 <- read_tsv(
-#     "~/Dropbox (Scripps Research)/Pej_H2_Comparisons/01_Data/FromNava/expression_variance/Variance_total_expression_afterPeerFactor.txt",
-#     col_types = "cd"
-# ) |>
-#     filter(!is.na(WHLBLD))
-```
-
-```{r}
-# human |>
-#     ggplot(aes(x = WHLBLD)) +
-#     geom_histogram(bins = 50) +
-#     scale_x_log10()
-# human2 |>
-#     ggplot(aes(x = WHLBLD)) +
-#     geom_histogram(bins = 50) +
-#     scale_x_log10()
-```
-
-```{r}
 human <- tibble(n_eQTLs = 1:13) |>
-    group_by(n_eQTLs) |>
-    # summarise(
-    #     read_csv(str_glue("Fig_1_F/Residual_info_{n_eQTLs}_variants.csv"),
-    #              col_types = c(gene_id = "c", .default = "d")) |>
-    #         # mutate(R2_top = 1 - Residual_1variant,
-    #         #        R2_all = 1 - .data[[str_c("Residual_", abc, "variant")]])},
-    #         select(all_of(c("gene_id", "Residual_1variant", str_glue("Residual_{n_eQTLs}variant")))) |>
-    #         mutate(R2_top = 1 - Residual_1variant),
-    #     .groups = "drop"
-    # )
-    summarise({
-        d <- read_csv(str_glue("Fig_1_F/Residual_info_{n_eQTLs}_variants.csv"),
+    reframe({
+        d <- read_csv(str_glue("../../data/expr_var_explained/Fig_1_F/Residual_info_{n_eQTLs}_variants.csv"),
                       col_types = c(gene_id = "c", .default = "d"))
         tibble(gene_id = d[["gene_id"]],
                R2_top = 1 - d[["Residual_1variant"]],
                R2_all = 1 - d[[str_glue("Residual_{n_eQTLs}variant")]])
-    }, .groups = "drop")
+    }, .by = n_eQTLs)
 ```
 
 ```{r}
@@ -134,7 +99,6 @@ human |>
 tmp <- bind_rows(
     corrs |>
         select(dataset = tissue, R2),
-        # mutate(dataset = "Rat NAcc"),
     human |>
         select(R2 = R2_top) |>
         mutate(dataset = "GTEx Adipose, top eQTL",
@@ -144,12 +108,8 @@ tmp <- bind_rows(
         mutate(dataset = "GTEx Adipose, all eQTLs")
 )
 tmp |>
-    # ggplot(aes(x = R2, fill = dataset)) +
-    # geom_density(color = NA, alpha = 0.5)# +
-    # coord_cartesian(xlim = c(-1, 2))
     ggplot(aes(x = dataset, y = R2)) +
-    geom_violin() #+
-    # geom_boxplot(width = 0.1, outlier.shape = NA)
+    geom_violin()
 ```
 
 Boxen plots (Widest box is inter-quartile range, and each additional box shows half of remaining values):
@@ -172,12 +132,11 @@ Comparing rat R2 to human R2 using all eQTLs, since I'm using all eQTLs for rat:
 
 ```{r}
 # Made in rat_human_aFC_stats.R:
-gene_map <- read_tsv("../aFC/gene_map.txt", col_types = "cc") |>
+gene_map <- read_tsv("../../data/afc/gene_map.txt", col_types = "cc") |>
     mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", ""))
 
 hom_r2 <- tibble(tis = tissues) |>
-    group_by(tis) |>
-    summarise(
+    reframe(
         gene_map |>
             rename(gene_id.rat = gene_id_rat,
                    gene_id.human = gene_id_human) |>
@@ -194,7 +153,7 @@ hom_r2 <- tibble(tis = tissues) |>
                            R2.human = R2_all),
                 by = "gene_id.human"
             ),
-        .groups = "drop"
+        .by = tis
     )
 
 tmp2 <- hom_r2 |>

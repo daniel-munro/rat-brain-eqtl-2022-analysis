@@ -1,9 +1,9 @@
 library(tidyverse)
 
-rat <- read_tsv("expr_var_explained/expr_R2.tsv", col_types = "ccdd") |>
+rat <- read_tsv("data/expr_var_explained/expr_R2.tsv", col_types = "ccdd") |>
     select(-corr)
 
-human <- read_tsv(list.files("expr_var_explained/R2_brain", full.names = TRUE),
+human <- read_tsv(list.files("data/expr_var_explained/R2_brain", full.names = TRUE),
                   col_types = "cd", id = "path") |>
     mutate(tissue = str_match(path, ".*Brain_([^/]+)_R2.tsv")[, 2]) |>
     select(tissue,
@@ -12,12 +12,10 @@ human <- read_tsv(list.files("expr_var_explained/R2_brain", full.names = TRUE),
     filter(!is.na(R2))
 
 # Made in rat_human_aFC_stats.R:
-orthologs <- read_tsv("aFC/gene_map.txt", col_types = "cc") |>
+orthologs <- read_tsv("data/afc/gene_map.txt", col_types = "cc") |>
     mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", ""))
 
 orthologs_filt <- orthologs |>
-    # filter(gene_id_rat %in% rat$gene_id,
-    #        gene_id_human %in% human$gene_id) |>
     inner_join(
         count(rat, gene_id, name = "n_rat_tissues"),
         by = c("gene_id_rat" = "gene_id")
@@ -49,14 +47,13 @@ r2 |>
                fct_recode(!!!tissues) |>
                fct_reorder(R2, median)) |>
     ggplot(aes(y = tissue, x = R2, fill = Organism)) +
-    # facet_wrap(~ organism, scales = "free_x") +
     geom_boxplot(outlier.size = 0.1) +
     xlab(expression(R^2*" for ortholog-filtered genes")) +
     ylab(NULL) +
     theme_minimal() +
     ggtitle("Only the 66 ortholog pairs with R2 for all tissues")
 
-ggsave("expr_var_explained/expr_R2.png", height = 3.5, width = 8, bg = "white")
+ggsave("analyses/expr_var_explained/expr_R2.png", height = 3.5, width = 8, bg = "white")
 
 r2 |>
     group_by(Organism, tissue) |>
@@ -94,7 +91,6 @@ corrs <- R2_corr |>
 R2_corr |>
     ggplot(aes(x = mean_R2_rat, y = mean_R2_human)) +
     geom_point(size = 0.5, alpha = 0.5) +
-    # geom_hex() +
     geom_text(aes(x = 0.73, y = 0.87, label = stats), data = corrs, hjust = "left") +
     coord_fixed() +
     expand_limits(x = 1, y = 1) +
@@ -102,7 +98,7 @@ R2_corr |>
     ylab(expression("Mean "*R^2*" in Human")) +
     theme_minimal()
 
-ggsave("expr_var_explained/expr_R2_corr.png", width = 4, height = 4, bg = "white")
+ggsave("analyses/expr_var_explained/expr_R2_corr.png", width = 4, height = 4, bg = "white")
 
 with(R2_corr, cor.test(mean_R2_rat, mean_R2_human))
 with(R2_corr, cor(mean_R2_rat, mean_R2_human, method = "spearman"))

@@ -1,10 +1,16 @@
 ---
 title: "R Notebook"
-output: html_notebook
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 ```{r}
-library(tidyverse)
+suppressPackageStartupMessages(library(tidyverse))
 library(patchwork)
 
 genes <- read_tsv("../../data/genes.txt", col_types = "cc----------")
@@ -15,18 +21,22 @@ eqtls <- read_tsv("../../data/eqtls/eqtls_indep.txt", col_types = "cc---c-----dd
 
 qtls <- read_csv("../../data/coloc/adiposity_qtls.csv", col_types = "cc--dcdciidc") |>
     filter(trait != "TL") |>
-    separate(topsnp, c("qtl_chrom", "qtl_pos"), sep = ":")
-    # mutate(chrom = as.integer(str_replace(chrom, "chr", "")))
+    separate_wider_delim(topsnp, ":", names = c("qtl_chrom", "qtl_pos"))
 
-sig <- read_tsv("SMR_sig.tsv", col_types = "cccdcddd")
+smr <- read_tsv("../../data/coloc/SMR.tsv", col_types = "cccdcddd") |>
+    separate_wider_delim(variant_id, ":", names = c("chrom", "pos")) |>
+    mutate(pos = as.integer(pos))
+
+sig <- read_tsv("../../data/coloc/SMR_sig.tsv", col_types = "cccdcddd") |>
+    separate_wider_delim(variant_id, ":", names = c("chrom", "pos")) |>
+    mutate(pos = as.integer(pos))
 
 gwas_dir <- "../../data/coloc/adiposity_GWAS/"
 gwas <- tibble(file = list.files(gwas_dir)) |>
-    group_by(file) |>
-    summarise(
+    reframe(
         read_tsv(str_c(gwas_dir, file), col_types = "-c-----dd-----d",
                  col_names = c("variant_id", "slope", "slope_se", "p_score")),
-        .groups = "drop"
+        .by = file
     ) |>
     mutate(trait = str_match(file, "allChr_physiological_(.+)\\.assoc\\.txt")[, 2], .before = 1) |>
     select(-file) |>
@@ -100,12 +110,11 @@ However, it's hard to draw conclusions from whether the strongest eQTLs for a ge
 
 ```{r}
 signif <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
-    group_by(tissue) |>
-    summarise(
+    reframe(
         read_tsv(str_glue("../../data/tensorqtl/{str_sub(tissue, 1, 1)}QCT.cis_qtl_signif.txt.gz"),
                  col_types = "ccidiidddd") |>
             filter(phenotype_id == "ENSRNOG00000004710"),
-        .groups = "drop"
+        .by = tissue
     )
 ```
 
@@ -157,14 +166,13 @@ Those eQTLs are actually outside the QTL region.
 
 ```{r}
 sig |>
-    separate(variant_id, c("chrom", "pos"), sep = ":", remove = FALSE) |>
     filter(tissue == "OFC",
            chrom == "chr1")
 ```
 
 ```{r}
 smr |>
-    filter(chrom == 1,
+    filter(chrom == "chr1",
            pos > 277000000,
            pos < 282000000) |>
     ggplot(aes(x = pos / 1e6, y = -log10(p_SMR), color = trait, shape = tissue)) +

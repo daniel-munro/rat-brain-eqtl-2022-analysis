@@ -21,7 +21,7 @@ eqtls <- read_tsv("data/eqtls/eqtls_indep.txt", col_types = "ccciciiidddddidd") 
            tissue = tissues[tissue]) |>
     select(tissue, gene_id, abs_aFC_rat)
 
-gene_map <- read_tsv("aFC/gene_map.txt", col_types = "cc")
+gene_map <- read_tsv("data/afc/gene_map.txt", col_types = "cc")
 
 gtex <- list.files("data/gtex/GTEx_Analysis_v8_eQTL", pattern = "*Brain_*",
                    full.names = TRUE) |>
@@ -34,15 +34,9 @@ gtex <- list.files("data/gtex/GTEx_Analysis_v8_eQTL", pattern = "*Brain_*",
            abs_aFC_human = abs(log2_aFC)) |>
     select(tissue, gene_id, abs_aFC_human)
 
-# # All homolog pairs with eQTLs in rat and human brain:
-# d <- gene_map |>
-#     inner_join(eqtls, by = c("gene_id_rat" = "gene_id")) |>
-#     inner_join(gtex, by = c("gene_id_human" = "gene_id"))
-
 pairs <- crossing(rat_tissue = unique(eqtls$tissue),
                   human_tissue = unique(gtex$tissue)) |>
-    group_by(rat_tissue, human_tissue) |>
-    summarise({
+    reframe({
         d <- gene_map |>
             inner_join(filter(eqtls, tissue == rat_tissue),
                        by = c("gene_id_rat" = "gene_id")) |>
@@ -51,7 +45,7 @@ pairs <- crossing(rat_tissue = unique(eqtls$tissue),
         tibble(eGene_overlap = nrow(d),
                aFC_corr_p = with(d, cor(abs_aFC_rat, abs_aFC_human)),
                aFC_corr_s = with(d, cor(abs_aFC_rat, abs_aFC_human, method = "spearman")))
-    }, .groups = "drop")
+    }, .by = c(rat_tissue, human_tissue))
 
 pairs |>
     ggplot(aes(x = human_tissue, y = rat_tissue, fill = eGene_overlap)) +
@@ -64,7 +58,6 @@ pairs |>
     ggplot(aes(x = human_tissue, y = rat_tissue, fill = aFC_corr_p)) +
     geom_tile() +
     scale_fill_viridis_c(option = "E") +
-    # scale_fill_gradient(low = "white", high = "black") +
     expand_limits(fill = c(0, 1)) +
     xlab("Human brain tissue") +
     ylab("Rat brain tissue") +
@@ -72,11 +65,4 @@ pairs |>
     theme_minimal() +
     theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
 
-ggsave("aFC/rat_human_heatmap.png", width = 5.5, height = 3.6)
-
-# pairs |>
-#     ggplot(aes(x = human_tissue, y = rat_tissue, fill = aFC_corr_s)) +
-#     geom_tile() +
-#     theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
-# 
-# ggsave("aFC/rat_human_heatmap2.png", width = 4, height = 4)
+ggsave("analyses/aFC/rat_human_heatmap.png", width = 5.5, height = 3.6)

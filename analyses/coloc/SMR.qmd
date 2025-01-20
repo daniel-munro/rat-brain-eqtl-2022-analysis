@@ -2,66 +2,66 @@
 title: "SMR analysis"
 author: "Daniel Munro"
 date: "2/1/2022"
-output: 
-  html_notebook: 
-    code_folding: none
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE)
-
-library(tidyverse)
+suppressPackageStartupMessages(library(tidyverse))
 library(patchwork)
 ```
 
 We have 5 rat brain tissues:
 
-- IL (Infralimbic cortex)
-- LHb (Lateral habenula)
-- NAcc (Nucleus accumbens core)
-- OFC (Orbitofrontal cortex)
-- PL (Prelimbic cortex)
+-   IL (Infralimbic cortex)
+-   LHb (Lateral habenula)
+-   NAcc (Nucleus accumbens core)
+-   OFC (Orbitofrontal cortex)
+-   PL (Prelimbic cortex)
 
 We have GWAS scores for 9 rat physiological traits from [Genome-Wide Association Study in 3,173 Outbred Rats Identifies Multiple Loci for Body Weight, Adiposity, and Fasting Glucose](https://onlinelibrary.wiley.com/doi/abs/10.1002/oby.22927).
 
-- bmi_bodylength_w_tail
-- bmi_bodylength_wo_tail
-- bodylength_w_tail
-- bodylength_wo_tail
-- bodyweight
-- epifat
-- fasting_glucose
-- parafat
-- retrofat
+-   bmi_bodylength_w_tail
+-   bmi_bodylength_wo_tail
+-   bodylength_w_tail
+-   bodylength_wo_tail
+-   bodyweight
+-   epifat
+-   fasting_glucose
+-   parafat
+-   retrofat
 
 Two special considerations:
 
-- The GWAS used pruning ($r^2<0.95$), so they only tested ~120,000 SNPs compared to ~3.5 million unpruned SNPs for eQTLs.
-- With only 88 outbred rats (75-81 per tissue) descending from 8 founder strains, an eQTL often has many (sometimes hundreds of) top tied eSNPs in 100% LD with each other.
+-   The GWAS used pruning ($r^2<0.95$), so they only tested \~120,000 SNPs compared to \~3.5 million unpruned SNPs for eQTLs.
+-   With only 88 outbred rats (75-81 per tissue) descending from 8 founder strains, an eQTL often has many (sometimes hundreds of) top tied eSNPs in 100% LD with each other.
 
 To get an eQTL/GWAS z-score pair per eQTL while accounting for these, for each eGene I test the top SNP that was tested in GWAS (breaking tie randomly if needed), even if it wasn't an overall top eSNP.
 
 ```{r include = FALSE}
-gwas_dir <- "../data/coloc/adiposity_GWAS/"
+gwas_dir <- "../../data/coloc/adiposity_GWAS/"
 gwas <- tibble(file = list.files(gwas_dir)) |>
-    group_by(file) |>
-    summarise(
+    reframe(
         read_tsv(str_c(gwas_dir, file), col_types = "-c-----dd-----d",
                  col_names = c("variant_id", "slope", "slope_se", "p_score")),
-        .groups = "drop"
+        .by = file
     ) |>
     mutate(trait = str_match(file, "allChr_physiological_(.+)\\.assoc\\.txt")[, 2], .before = 1) |>
     select(-file) |>
     mutate(z_GWAS = slope / slope_se) |>
     select(-slope, -slope_se)
 
-eqtls <- read_tsv("../data/eqtls/eqtls_indep.txt", col_types = "cc---c-----ddd---") |>
+eqtls <- read_tsv("../../data/eqtls/eqtls_indep.txt", col_types = "cc---c-----ddd---") |>
     mutate(z_eQTL = slope / slope_se) |>
     select(-slope, -slope_se)
 
-smr <- read_tsv("SMR.tsv", col_types = "cccdcddd")
+smr <- read_tsv("../../data/coloc/SMR.tsv", col_types = "cccdcddd")
 
-sig <- read_tsv("SMR_sig.tsv", col_types = "cccdcddd")
+sig <- read_tsv("../../data/coloc/SMR_sig.tsv", col_types = "cccdcddd")
 ```
 
 ```{r fig.width = 4, fig.height = 1.5}
@@ -81,9 +81,9 @@ p3 <- smr |>
 p1 + p2 + p3
 ```
 
-- For each top eSNP with both z-scores, I calculated the SMR statistic for each trait:
-- I calculated $T_{SMR}$ as $(z_{eQTL}^2 * z_{GWAS}^2) / (z_{eQTL}^2 + z_{GWAS}^2)$
-- I calculated $P_{SMR}$ as `pchisq(T_SMR, df = 1, lower.tail = FALSE)`.
+-   For each top eSNP with both z-scores, I calculated the SMR statistic for each trait:
+-   I calculated $T_{SMR}$ as $(z_{eQTL}^2 * z_{GWAS}^2) / (z_{eQTL}^2 + z_{GWAS}^2)$
+-   I calculated $P_{SMR}$ as `pchisq(T_SMR, df = 1, lower.tail = FALSE)`.
 
 <!-- So for each gene I have an SMR p-value for each tissue where it has an eQTL, for each independent eQTL in cases where there's more than one, for each GWAS trait. -->
 
@@ -128,7 +128,7 @@ The traits with bigger low-p-value peaks correspond to the traits with the stron
 
 ## Significant colocalizations
 
-Using significance threshold p_SMR < 0.05/(# of SMR tests), calculated separately per tissue per trait, this many eQTLs have significant colocalization according to SMR:
+Using significance threshold p_SMR \< 0.05/(# of SMR tests), calculated separately per tissue per trait, this many eQTLs have significant colocalization according to SMR:
 
 ```{r, rows.print = 25}
 sig |>
@@ -136,16 +136,11 @@ sig |>
 ```
 
 ```{r}
-# genome_pos <- function(chrom, pos) {
-#     pos + cumsum(c(0, chr_len))[chrom]
-# }
-
 manhattan <- function(df, pval_col) {
     chr_len <- c(282763074, 266435125, 177699992, 184226339, 173707219,
                  147991367, 145729302, 133307652, 122095297, 112626471,
                  90463843, 52716770, 114033958, 115493446, 111246239,
                  90668790, 90843779, 88201929, 62275575, 56205956)
-    # chr_len <- chr_len + 1e7 # Add space between chromosomes
     label_locs <- cumsum(c(0, chr_len[1:19])) + chr_len / 2
     df <- df |>
         mutate(variant_id = str_replace(variant_id, "chr", ""),
@@ -155,7 +150,6 @@ manhattan <- function(df, pval_col) {
                gcolor = as.factor((chrom - 1) %% 2)) |>
         arrange(gpos)
     ggplot(df, aes(x = gpos, y = logp, color = gcolor)) +
-        # geom_point(size = 1, show.legend = FALSE) +
         scale_x_continuous(breaks = label_locs, labels = 1:20, expand = c(0.02, 0)) +
         scale_y_continuous(limits = c(0, max(df$logp) * 1.05), expand = c(0.005, 0)) +
         scale_color_manual(values = c("#111111", "#6290BC")) +
@@ -202,4 +196,3 @@ sig |>
     scale_color_manual(values = c("#377eb8", "#4daf4a", "#e41a1c", "#ff7f00", "#984ea3")) +
     ggtitle("Significant colocalizations")
 ```
-

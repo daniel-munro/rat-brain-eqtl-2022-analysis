@@ -12,27 +12,19 @@ library(tidyverse)
 ```
 
 ```{r}
-# pca_vars <- read_lines("smartpca.pca.evec", n_max = 1)
-# pca_vars <- str_split(pca_vars, boundary("word"))[[1]][-1] %>%
-#     as.double() %>%
-#     tibble(
-#         PC = 1:length(.),
-#         variance = .
-#     ) %>%
-#     mutate(percent_explained = variance / sum(variance))
-pca_vars <- read_table("smartpca.eval", col_names = "variance", col_types = "d") %>%
+pca_vars <- read_table("smartpca.eval", col_names = "variance", col_types = "d") |>
     mutate(PC = 1:n(),
            PVE = variance / sum(variance))
 
-pca_vars %>%
+pca_vars |>
     ggplot(aes(x = PC, y = PVE)) +
     geom_bar(stat = "identity") +
     ggtitle("Percent variance explained per PC")
 ```
 
 ```{r}
-pca_vars %>%
-    mutate(PVE = cumsum(PVE)) %>%
+pca_vars |>
+    mutate(PVE = cumsum(PVE)) |>
     ggplot(aes(x = PC, y = PVE)) +
     geom_point() +
     expand_limits(y = c(0, 1)) +

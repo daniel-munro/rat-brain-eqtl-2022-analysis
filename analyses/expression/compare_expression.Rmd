@@ -37,24 +37,23 @@ run_umap <- function(df) {
 ```
 
 ```{r}
-covar <- read_csv("../data/DemographicInfo_TN_RNASeq_88_LauraSaba.csv",
+covar <- read_csv("../../data/DemographicInfo_TN_RNASeq_88_LauraSaba.csv",
                   col_types = cols(rat_rfid = "c", batchnumber = "c",
                                    sex_mf = "c", .default = "-")) |>
     mutate(rat_id = toupper(rat_rfid))
 
 expr <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
-    group_by(tissue) |>
-    summarise(
-        read_tsv(str_glue("../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
+    reframe(
+        read_tsv(str_glue("../../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
                  col_types = cols(`#chr` = "-", start = "-", end = "-",
                                   gene_id = "c", .default = "d")) |>
             pivot_longer(-gene_id, names_to = "rat_id", values_to = "expr"),
-        .groups = "drop"
+        .by = tissue
     ) |>
     group_by(gene_id) |>
     filter(n_distinct(tissue) == 5) |>
     ungroup() |>
-    pivot_wider(c(rat_id, tissue), names_from = gene_id, values_from = expr)
+    pivot_wider(id_cols = c(rat_id, tissue), names_from = gene_id, values_from = expr)
 expr_df <- expr |>
     select(-rat_id, -tissue) |>
     as.data.frame()

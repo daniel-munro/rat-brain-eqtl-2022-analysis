@@ -1,6 +1,12 @@
 ---
 title: "LM vs LMM aFC comparison"
-output: html_notebook
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 Look at aFC correlation for eQTLs lost/gained when using LMM. trans effects shouldn't affect ASE, so affected eQTLs would probably have worse aFC correlation. But that could be confounded by those eQTL likely being marginally significant, and significance can be correlated with aFC.
@@ -10,37 +16,37 @@ For now I'll use previously computed aFC for top association per gene rather tha
 ```{r}
 library(tidyverse)
 
-top_lm <- read_tsv("../data/gemma/Acbc.lm.assoc.txt",
-                   col_types = "c-c--------d") %>%
-    group_by(gene_id) %>%
-    sample_n(1) %>%
+top_lm <- read_tsv("../../data/gemma/NAcc.lm.assoc.txt.gz",
+                   col_types = "c-c--------d") |>
+    group_by(gene_id) |>
+    sample_n(1) |>
     ungroup()
 
-top_lmm <- read_tsv("../data/gemma/Acbc.lmm.assoc.txt",
-                    col_types = "c-c----------d--") %>%
-    group_by(gene_id) %>%
-    sample_n(1) %>%
+top_lmm <- read_tsv("../../data/gemma/NAcc.lmm.assoc.txt.gz",
+                    col_types = "c-c----------d--") |>
+    group_by(gene_id) |>
+    sample_n(1) |>
     ungroup()
 
-pve <- read_tsv("../data/gemma/Acbc.grm_pve.pve.txt", col_types = "cdd")
+pve <- read_tsv("../../data/gemma/NAcc.grm_pve.pve.txt", col_types = "cdd")
 
-ase <- read_tsv("../data/eqtls/ASE_aFC.txt", col_types = "cccd")
+ase <- read_tsv("../../data/eqtls/ASE_aFC.txt", col_types = "cccd")
 
-afc <- top_assoc <- read_tsv("../data/eqtls/top_assoc.txt", col_types = "cc---c-----------d") %>%
-    filter(tissue == "Acbc") %>%
-    left_join(ase, by = c("tissue", "gene_id", "variant_id")) %>%
-    mutate(abs_log2_aFC = abs(log2_aFC)) %>%
+afc <- top_assoc <- read_tsv("../../data/eqtls/top_assoc.txt", col_types = "cc---c-----------d") |>
+    filter(tissue == "NAcc") |>
+    left_join(ase, by = c("tissue", "gene_id", "variant_id")) |>
+    mutate(abs_log2_aFC = abs(log2_aFC)) |>
     select(gene_id, log2_aFC, log2_aFC_ASE)
 
 p_threshold <- 1e-3
 
 top <- full_join(
-    top_lm %>% select(gene_id, p_lm = p_wald),
-    top_lmm %>% select(gene_id, p_lmm = p_wald),
+    top_lm |> select(gene_id, p_lm = p_wald),
+    top_lmm |> select(gene_id, p_lmm = p_wald),
     by = "gene_id"
-) %>%
-    left_join(pve, by = "gene_id") %>%
-    left_join(afc, by = "gene_id") %>%
+) |>
+    left_join(pve, by = "gene_id") |>
+    left_join(afc, by = "gene_id") |>
     mutate(group = case_when(
         p_lm < p_threshold & p_lmm >= p_threshold ~ "LM_eQTL",
         p_lm >= p_threshold & p_lmm < p_threshold ~ "LMM_eQTL",
@@ -52,8 +58,8 @@ top <- full_join(
 I'll just choose 0.001 as the p-value threshold. There aren't a lot of LM-only or LMM-only significant genes with ASE aFC, which makes correlation comparisons difficult:
 
 ```{r}
-top %>%
-    group_by(group) %>%
+top |>
+    group_by(group) |>
     summarise(n_genes = n(),
               n_genes_w_ASE_aFC = sum(!is.na(log2_aFC_ASE)),
               Pearson_R = cor(log2_aFC, log2_aFC_ASE, use = "complete.obs"),
@@ -61,15 +67,15 @@ top %>%
 ```
 
 ```{r}
-top %>%
+top |>
     ggplot(aes(x = group, y = abs(log2_aFC))) +
     geom_boxplot(outlier.size = 0.25) +
     coord_cartesian(ylim = c(0, 2))
 ```
 
 ```{r}
-top %>%
-    filter(!is.na(log2_aFC_ASE)) %>%
+top |>
+    filter(!is.na(log2_aFC_ASE)) |>
     ggplot(aes(x = log2_aFC_ASE, y = log2_aFC)) +
     facet_wrap(~ group) +
     geom_point(size = 0.25)

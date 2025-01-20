@@ -33,8 +33,8 @@ probs <- function(prob, n_SNPs = NULL, n_individuals = NULL) {
     }
     individuals <- dimnames(prob)[["individual"]]
     SNPs <- dimnames(prob)[["SNP"]]
-    d <- cubelyr::as.tbl_cube(prob) %>%
-        as_tibble() %>%
+    d <- cubelyr::as.tbl_cube(prob) |>
+        as_tibble() |>
         mutate(
             individual = as.integer(factor(individual, levels = individuals)),
             strain = factor(strains[strain], levels = strains),
@@ -45,8 +45,8 @@ probs <- function(prob, n_SNPs = NULL, n_individuals = NULL) {
 
 individuals_df <- function(d) {
     # "individual" as row, strain_SNP as columns.
-    df <- d %>%
-        pivot_wider(names_from = c(strain, SNP), values_from = prob) %>%
+    df <- d |>
+        pivot_wider(names_from = c(strain, SNP), values_from = prob) |>
         as.data.frame()
     rownames(df) <- df$individual
     df$individual <- NULL
@@ -66,12 +66,10 @@ plot_probs <- function(d) {
         axis.text.y = element_blank(),
         panel.grid = element_blank(),
         axis.text.x = element_blank(),
-        # panel.spacing = unit(0.002, "npc")
     )
 }
 
 apr <- readRDS(argv$infile)
-# d <- probs(apr, n_SNPs = 500, n_individuals = 10)
 d <- probs(apr)
 
 if (argv$cluster) {
@@ -84,8 +82,8 @@ if (argv$cluster) {
         scale_x_discrete(expand = expansion(add = c(0.5, 0.5))) +
         ggdendro::theme_dendro()
 
-    p2 <- d %>%
-        mutate(individual = factor(individual, levels = rev(ggdendro::label(ddata)$label))) %>%
+    p2 <- d |>
+        mutate(individual = factor(individual, levels = rev(ggdendro::label(ddata)$label))) |>
         plot_probs() +
         ylab(NULL) +
         ggtitle(argv$title)

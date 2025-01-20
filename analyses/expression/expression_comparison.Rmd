@@ -13,36 +13,36 @@ library(tidyverse)
 ```
 
 ```{r}
-rsem <- read_tsv("../data/expression/rsem_expected_count.gct.gz",
+rsem <- read_tsv("../../data/expression/rsem_expected_count.gct.gz",
                  skip = 2,
-                 col_types = cols(Name = "c", Description = "-", .default = "d")) %>%
-    rename(gene = Name) %>%
-    pivot_longer(-gene, names_to = "sample", values_to = "expr_rsem") %>%
+                 col_types = cols(Name = "c", Description = "-", .default = "d")) |>
+    rename(gene = Name) |>
+    pivot_longer(-gene, names_to = "sample", values_to = "expr_rsem") |>
     mutate(expr_rsem = log2(expr_rsem + 1))
 
-ase <- read_tsv("../data/afc/expr_matrix.bed.gz", col_types = cols(
+ase <- read_tsv("../../data/afc/expr_matrix.bed.gz", col_types = cols(
     "#contig" = "-", start = "-", stop = "-", .default = "c"
-)) %>%
-    pivot_longer(-name, names_to = "sample") %>%
-    mutate(sample = str_replace(sample, ".Aligned.sortedByCoord.out.md", "")) %>%
-    separate(value, c("expr1", "expr2"), sep = "\\|", convert = TRUE) %>%
-    mutate(expr_ase = log2(expr1 + expr2 + 1)) %>%
+)) |>
+    pivot_longer(-name, names_to = "sample") |>
+    mutate(sample = str_replace(sample, ".Aligned.sortedByCoord.out.md", "")) |>
+    separate(value, c("expr1", "expr2"), sep = "\\|", convert = TRUE) |>
+    mutate(expr_ase = log2(expr1 + expr2 + 1)) |>
     select(gene = name, sample, expr_ase)
 
-laura <- read_tsv("../data/expression/ensemblGeneV2_Norm-counts-log2+1.bed.gz",
+laura <- read_tsv("../../data/expression/ensemblGeneV2_Norm-counts-log2+1.bed.gz",
                   col_types = cols("#chr" = "-", start = "-", end = "-",
-                                   gene_id = "c", .default = "d")) %>%
-    pivot_longer(-gene_id, names_to = "sample", values_to = "expr_laura") %>%
-    mutate(sample = str_c(sample, "_Acbc")) %>%
+                                   gene_id = "c", .default = "d")) |>
+    pivot_longer(-gene_id, names_to = "sample", values_to = "expr_laura") |>
+    mutate(sample = str_c(sample, "_Acbc")) |>
     rename(gene = gene_id)
 
-expr <- inner_join(rsem, ase, by = c("gene", "sample")) %>%
+expr <- inner_join(rsem, ase, by = c("gene", "sample")) |>
     left_join(laura, by = c("gene", "sample"))
 ```
 
 ```{r}
-cor_gene <- expr %>%
-    group_by(gene) %>%
+cor_gene <- expr |>
+    group_by(gene) |>
     summarise(median_expr_rsem = median(expr_rsem),
               median_expr_ase = median(expr_ase),
               median_expr_laura = median(expr_laura, na.rm = TRUE),
@@ -62,7 +62,7 @@ ggplot(cor_gene, aes(x = median_expr_rsem, y = median_expr_laura)) +
 ```
 
 ```{r}
-cor_gene %>%
+cor_gene |>
     summarise(cor_rsem_ase = cor(median_expr_rsem, median_expr_ase),
               cor_rsem_laura = cor(median_expr_rsem, median_expr_laura,
                                    use = "complete.obs"))
@@ -71,12 +71,12 @@ cor_gene %>%
 For each gene, do the RSEM and ASE expression values correlate?
 
 ```{r}
-cor_gene %>%
+cor_gene |>
     ggplot(aes(x = corr)) +
     geom_histogram(bins = 30) +
     xlab("Pearson's R")
 
-cor_gene %>%
+cor_gene |>
     ggplot(aes(x = corr_s)) +
     geom_histogram(bins = 30) +
     xlab("Spearman's rho")

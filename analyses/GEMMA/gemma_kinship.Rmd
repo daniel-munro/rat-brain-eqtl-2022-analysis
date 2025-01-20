@@ -12,30 +12,31 @@ library(tidyverse)
 ```
 
 ```{r}
-d <- tibble(chrn = 1:20) %>%
-    group_by(chrn) %>%
-    summarise(read_tsv(str_glue("../data/gemma/kinship/{chrn}.cXX.txt"),
-                       col_types = cols(.default = "d"),
-                       col_names = FALSE) %>%
-                  mutate(individual1 = 1:n()) %>%
-                  pivot_longer(-individual1,
-                               names_to = "individual2",
-                               values_to = "kinship") %>%
-                  mutate(individual2 = individual2 %>% str_sub(2) %>% as.integer()),
-              .groups = "drop")
+d <- tibble(chrn = 1:20) |>
+    reframe(
+        read_tsv(str_glue("../../data/gemma/kinship/{chrn}.cXX.txt"),
+                 col_types = cols(.default = "d"),
+                 col_names = FALSE) |>
+            mutate(individual1 = 1:n()) |>
+            pivot_longer(-individual1,
+                         names_to = "individual2",
+                         values_to = "kinship") |>
+            mutate(individual2 = individual2 |> str_sub(2) |> as.integer()),
+        .by = chrn
+    )
 
-d_mean <- d %>%
-    group_by(individual1, individual2) %>%
-    summarise(kinship = mean(kinship), .groups = "drop")
+d_mean <- d |>
+    summarise(kinship = mean(kinship),
+              .by = c(individual1, individual2))
 
-pve <- read_tsv("../data/gemma/Acbc.lmm.pve.txt", col_types = "cdd")
-pve_rand <- read_tsv("../data/gemma/Acbc.lmm_rand.pve.txt", col_types = "cdd")
+pve <- read_tsv("../../data/gemma/NAcc.lmm.pve.txt", col_types = "cdd")
+pve_rand <- read_tsv("../../data/gemma/NAcc.lmm_rand.pve.txt", col_types = "cdd")
 ```
 
 Kinship averaged across chromosomes. (Ideally it should be weighted by variants per chromosome, but this is equal weight per chromosome.)
 
 ```{r fig.width = 6, fig.height = 5}
-d %>%
+d |>
     ggplot(aes(x = individual1, y = individual2, fill = kinship)) +
     geom_tile() +
     scale_fill_viridis_c() +
@@ -45,8 +46,8 @@ d %>%
 It looks like there are around 4 sibling pairs, whose kinships are about halfway between the lowest values and the self values:
 
 ```{r}
-d_mean %>%
-    filter(individual1 <= individual2) %>%
+d_mean |>
+    filter(individual1 <= individual2) |>
     ggplot(aes(x = kinship)) +
     ggtitle("Centered kinship values, including self-kinships") +
     geom_histogram(bins = 30) +
@@ -57,8 +58,8 @@ d_mean %>%
              color = "red", fill = NA) +
     annotate("text", label = "self", x = 0.325, y = 150, color = "red")
 
-d_mean %>%
-    filter(individual1 <= individual2) %>%
+d_mean |>
+    filter(individual1 <= individual2) |>
     ggplot(aes(x = kinship)) +
     geom_histogram(bins = 30) +
     coord_cartesian(xlim = c(0.05, NA), ylim = c(0, 25)) +
@@ -69,21 +70,21 @@ d_mean %>%
 ## Heritability (PVE)
 
 ```{r}
-pve %>%
+pve |>
     ggplot(aes(x = pve)) +
     geom_histogram(bins = 100) +
     ggtitle("PVE (heritability) for all genes",
             subtitle = str_glue("n = {nrow(pve)}"))
 
-pve %>%
+pve |>
     ggplot(aes(x = pve)) +
     geom_histogram(bins = 100) +
     scale_x_log10() +
     ggtitle("PVE (heritability) for all genes: log scale",
             subtitle = str_glue("n = {nrow(pve)}"))
 
-pve %>%
-    filter(pve < 1e-4) %>%
+pve |>
+    filter(pve < 1e-4) |>
     ggplot(aes(x = pve)) +
     geom_histogram(bins = 100) +
     ggtitle("PVE (heritability) for all genes: PVE < 1e-4",
@@ -91,15 +92,13 @@ pve %>%
 ```
 
 ```{r}
-pve %>%
-    # slice(1:100) %>%
+pve |>
     mutate(gene_id = fct_reorder(gene_id, pve),
            pve_lower = pve - se_pve,
-           pve_upper = pve + se_pve) %>%
+           pve_upper = pve + se_pve) |>
     ggplot(aes(x = gene_id, y = pve, ymin = pve_lower, ymax = pve_upper)) +
     geom_linerange(color = "#888888", size = 0.1) +
     geom_point(size = 0.5) +
-    # geom_point() +
     coord_cartesian(ylim = c(0, 1)) +
     theme_bw() +
     theme(axis.text.x = element_blank(),
@@ -111,15 +110,13 @@ pve %>%
 Same for shuffled phenotypes:
 
 ```{r}
-pve_rand %>%
-    # slice(1:100) %>%
+pve_rand |>
     mutate(gene_id = fct_reorder(gene_id, pve),
            pve_lower = pve - se_pve,
-           pve_upper = pve + se_pve) %>%
+           pve_upper = pve + se_pve) |>
     ggplot(aes(x = gene_id, y = pve, ymin = pve_lower, ymax = pve_upper)) +
     geom_linerange(color = "#888888", size = 0.1) +
     geom_point(size = 0.5) +
-    # geom_point() +
     coord_cartesian(ylim = c(0, 1)) +
     theme_bw() +
     theme(axis.text.x = element_blank(),
