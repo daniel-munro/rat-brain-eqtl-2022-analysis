@@ -101,12 +101,13 @@ genes_in_high_ld <- genes2 |>
             pivot_longer(-gene_id, names_to = "gene_id2", values_to = "r2")
     }, .by = chrom) |>
     filter(gene_id != gene_id2) |>
-    group_by(gene_id) |>
-    summarise(n_genes_ld_100 = sum(r2 == 1),
-              n_genes_ld_99 = sum(r2 > 0.99),
-              n_genes_ld_95 = sum(r2 > 0.95),
-              n_genes_ld_90 = sum(r2 > 0.9),
-              .groups = "drop")
+    summarise(
+        n_genes_ld_100 = sum(r2 == 1),
+        n_genes_ld_99 = sum(r2 > 0.99),
+        n_genes_ld_95 = sum(r2 > 0.95),
+        n_genes_ld_90 = sum(r2 > 0.9),
+        .by = gene_id
+    )
 genes_in_high_ld |>
     summarise(across(-gene_id, ~ sum(. > 0)),
               total = n())

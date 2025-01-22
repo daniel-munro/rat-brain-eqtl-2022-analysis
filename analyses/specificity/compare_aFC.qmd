@@ -1,0 +1,96 @@
+---
+title: "aFC across tissues"
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
+---
+
+For genes that are eGenes in multiple tissues, compare aFC of top eQTLs to see if this supports real tissue specificity vs. stochasticity.
+
+```{r}
+library(tidyverse)
+
+eqtls_all <- read_tsv("../../data/eqtls/top_assoc.txt", col_types = "ccciicciccdddddddd") |>
+    mutate(gene_rank = fct_reorder(gene_id, log2_aFC, mean) |> as.integer()) |>
+    group_by(gene_id) |>
+    mutate(consistent = max(log2_aFC) - min(log2_aFC) <= 1) |>
+    ungroup()
+eqtls <- eqtls_all |>
+    filter(qval < 0.05) |>
+    mutate(gene_rank = fct_reorder(gene_id, log2_aFC, mean) |> as.integer()) |>
+    group_by(gene_id) |>
+    mutate(consistent = max(log2_aFC) - min(log2_aFC) <= 1) |>
+    ungroup()
+```
+
+```{r}
+eqtls |>
+    ggplot(aes(x = gene_rank, y = log2_aFC, color = consistent)) +
+    geom_point(size = 0.25, alpha = 0.5) +
+    theme_minimal() +
+    xlab("eGenes ranked by mean aFC across tissues")
+```
+
+```{r}
+eqtls_all |>
+    ggplot(aes(x = gene_rank, y = log2_aFC, color = consistent)) +
+    geom_point(size = 0.25, alpha = 0.5) +
+    theme_minimal() +
+    xlab("All genes ranked by mean aFC across tissues")
+```
+
+```{r}
+eqtls_all |>
+    filter(!is.na(log2_aFC)) |>
+    summarise(mean_log2_aFC = mean(log2_aFC),
+              stdev_log2_aFC = sd(log2_aFC),
+              consistent = any(consistent),
+              .by = gene_rank) |>
+    ggplot(aes(x = mean_log2_aFC, y = stdev_log2_aFC, color = consistent)) +
+    geom_point(size = 0.25, alpha = 0.5)
+```
+
+```{r}
+eqtls_all |>
+    filter(!is.na(log2_aFC)) |>
+    summarise(abs_mean_log2_aFC = abs(mean(log2_aFC)),
+              consistent = any(consistent),
+              .by = gene_rank) |>
+    ggplot(aes(x = abs_mean_log2_aFC, fill = consistent)) +
+    geom_density(alpha = 0.5) +
+    ggtitle("All genes")
+
+eqtls |>
+    filter(!is.na(log2_aFC)) |>
+    summarise(abs_mean_log2_aFC = abs(mean(log2_aFC)),
+              consistent = any(consistent),
+              .by = gene_rank) |>
+    ggplot(aes(x = abs_mean_log2_aFC, fill = consistent)) +
+    geom_density(alpha = 0.5) +
+    ggtitle("eGenes")
+
+eqtls_all |>
+    filter(!is.na(log2_aFC)) |>
+    summarise(abs_mean_log2_aFC = abs(mean(log2_aFC)),
+              consistent = any(consistent),
+              .by = gene_rank) |>
+    ggplot(aes(x = consistent, y = abs_mean_log2_aFC)) +
+    geom_boxplot() +
+    coord_flip() +
+    ggtitle("All genes")
+
+eqtls |>
+    filter(!is.na(log2_aFC)) |>
+    summarise(abs_mean_log2_aFC = abs(mean(log2_aFC)),
+              consistent = any(consistent),
+              .by = gene_rank) |>
+    ggplot(aes(x = consistent, y = abs_mean_log2_aFC)) +
+    geom_boxplot() +
+    coord_flip() +
+    ggtitle("eGenes")
+```
+

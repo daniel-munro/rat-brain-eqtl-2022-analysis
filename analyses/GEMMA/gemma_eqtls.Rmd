@@ -16,13 +16,13 @@ library(patchwork)
 top_lm <- read_tsv("../../data/gemma/NAcc.lm.assoc.txt.gz",
                    col_types = "c-c--------d") |>
     group_by(gene_id) |>
-    sample_n(1) |>
+    slice_sample(n = 1) |>
     ungroup()
 
 top_lmm <- read_tsv("../../data/gemma/NAcc.lmm.assoc.txt.gz",
                     col_types = "c-c----------d--") |>
     group_by(gene_id) |>
-    sample_n(1) |>
+    slice_sample(n = 1) |>
     ungroup()
 
 pve <- read_tsv("../../data/gemma/NAcc.grm_pve.pve.txt", col_types = "cdd")
@@ -63,11 +63,10 @@ p1 + p2
 
 ```{r}
 tmp <- tibble(threshold = 10 ^ seq(from = -10, to = -2, length.out = 500)) |>
-    group_by(threshold) |>
     summarise(`LM only` = sum(top$p_lm < threshold & top$p_lmm >= threshold),
               `LMM only` = sum(top$p_lm >= threshold & top$p_lmm < threshold),
               both = sum(top$p_lm < threshold & top$p_lmm < threshold),
-              .groups = "drop") |>
+              .by = threshold) |>
     pivot_longer(-threshold, names_to = "Significant in", values_to = "eGenes") |>
     mutate(`Significant in` = fct_relevel(`Significant in`, "LM only", "both", "LMM only"))
 

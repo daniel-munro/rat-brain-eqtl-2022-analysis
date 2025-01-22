@@ -1,33 +1,33 @@
 ---
 title: "cis-heritability"
-output: html_notebook
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 ```{r}
-library(tidyverse)
-```
+suppressPackageStartupMessages(library(tidyverse))
 
-```{r}
-# vg <- read_tsv("../Vg/Vg.NAcc.tsv.gz", col_types = "cd")
 vg <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
-    group_by(tissue) |>
-    summarise(
-        read_tsv(str_glue("../Vg/Vg.{tissue}.tsv.gz"), col_types = "cd"),
-        .groups = "drop"
+    reframe(
+        read_tsv(str_glue("../../data/anevah/output/Vg.{tissue}.tsv.gz"), col_types = "cd"),
+        .by = tissue
     ) |>
     rename(gene_id = GENE_ID)
 
-eqtls <- read_tsv("../data/eqtls/eqtls_indep.txt", col_types = "ccciiciiccdddddid")
+eqtls <- read_tsv("../../data/eqtls/eqtls_indep.txt", col_types = "ccciiciiccdddddid")
 has_eqtl <- eqtls |>
     select(tissue, gene_id) |>
     mutate(eqtl = TRUE)
 
-# pve <- read_tsv("../data/gemma/NAcc.cis_pve.txt", col_types = "cdd") |>
 pve <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
-    group_by(tissue) |>
-    summarise(
-        read_tsv(str_glue("../data/gemma/{tissue}.cis_pve.txt"), col_types = "cd"),
-        .groups = "drop"
+    reframe(
+        read_tsv(str_glue("../../data/gemma/{tissue}.cis_pve.txt"), col_types = "cd"),
+        .by = tissue
     ) |>
     filter(!is.na(pve)) |>
     mutate(pve_raw = pve,
@@ -58,22 +58,17 @@ pve |>
 Does cis-PVE for each gene correlate across tissues?
 
 ```{r}
-# pve |>
-#     slice(1:1000) |>
-#     ggplot(aes(x = gene_id, y = tissue, fill = pve)) +
-#     geom_tile()
 pve |>
-    # slice_sample(n = 1000) |>
-    group_by(gene_id) |>
     filter(n() == 5,
-           runif(1) < 0.01) |>
-    summarise({
+           runif(1) < 0.1,
+           .by = gene_id) |>
+    reframe({
         df <- tibble(tissue, pve)
         crossing(tissue.x = tissue,
                  tissue.y = tissue) |>
-            left_join(df, by = c("tissue.x" = "tissue")) |>
-            left_join(df, by = c("tissue.y" = "tissue"))
-    }, .groups = "drop") |>
+            left_join(df, by = c("tissue.x" = "tissue"), relationship = "many-to-many") |>
+            left_join(df, by = c("tissue.y" = "tissue"), relationship = "many-to-many")
+    }, .by = gene_id) |>
     ggplot(aes(x = pve.x, y = pve.y)) +
     facet_grid(rows = vars(tissue.x), cols = vars(tissue.y)) +
     geom_point(size = 0.5, alpha = 0.5)
@@ -113,28 +108,27 @@ mean_pve |>
     ggtitle(str_glue("Pearson R = {corr}"))
 ```
 
-## Compare to human brain
+## Compare to human (NOTE: non-brain human tissues only)
 
 The GTEx heritability estimates were produced in https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1006423 and obtained from https://github.com/jlbren/GenArchDB. They did Bayesian Sparse LMM using GCTA (h2) and LMM using GEMMA (pve).
 
 ```{r}
-gene_map <- read_tsv("../data/gtex/orthologs.txt", col_types = "cc") |>
+gene_map <- read_tsv("../../data/gtex/orthologs.txt", col_types = "cc") |>
     mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", ""))
 
 rat <- pve |>
     group_by(gene_id) |>
     summarise(mean_h2_rat = mean(pve))
 
-gtex <- read_csv("../data/gtex/heritability/genarch.csv.gz", col_types = "-ccd-d----") |>
-    filter(*No brain tissues in this db*) |>
+gtex <- read_csv("../../data/gtex/heritability/old/genarch.csv.gz", col_types = "-ccd-d----") |>
     mutate(ensid = str_replace(ensid, "\\..+$", "")) |>
     group_by(ensid) |>
     summarise(mean_h2_human = mean(h2),
               mean_pve_human = mean(pve))
 
 mean_ortho <- gene_map |>
-    inner_join(rat, by = c("gene_id_rat" = "gene_id")) |>
-    inner_join(gtex, by = c("gene_id_human" = "ensid"))
+    inner_join(rat, by = c("gene_id_rat" = "gene_id"), relationship = "many-to-one") |>
+    inner_join(gtex, by = c("gene_id_human" = "ensid"), relationship = "many-to-one")
 ```
 
 ```{r}
@@ -149,7 +143,6 @@ deming <- mean_ortho |>
 mean_ortho |>
     ggplot(aes(x = mean_h2_rat, y = mean_h2_human)) +
     geom_point(size = 0.5, alpha = 0.5) +
-    # geom_density_2d_filled() +
     geom_abline(aes(intercept = intercept, slope = slope), data = deming, color = "#8888cc") +
     coord_fixed() +
     expand_limits(x = 0, y = 0) +
@@ -169,7 +162,6 @@ deming2 <- mean_ortho |>
 mean_ortho |>
     ggplot(aes(x = mean_h2_rat, y = mean_pve_human)) +
     geom_point(size = 0.5, alpha = 0.5) +
-    # geom_density_2d_filled() +
     geom_abline(aes(intercept = intercept, slope = slope), data = deming2, color = "#8888cc") +
     coord_fixed() +
     expand_limits(x = 0, y = 0) +
@@ -178,10 +170,6 @@ mean_ortho |>
 ```
 
 ```{r}
-# mean_ortho |>
-#     summarise(cor_h2 = cor(mean_h2_rat, mean_h2_human),
-#               pcor_H2 = cor.test()
-#               cor_pve = cor(mean_h2_rat, mean_pve_human))
 with(mean_ortho, cor.test(mean_h2_rat, mean_h2_human))
 with(mean_ortho, cor.test(mean_h2_rat, mean_pve_human))
 ```

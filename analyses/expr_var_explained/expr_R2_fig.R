@@ -11,8 +11,7 @@ human <- read_tsv(list.files("data/expr_var_explained/R2_brain", full.names = TR
            R2 = R2_all_variants) |>
     filter(!is.na(R2))
 
-# Made in rat_human_aFC_stats.R:
-orthologs <- read_tsv("data/afc/gene_map.txt", col_types = "cc") |>
+orthologs <- read_tsv("data/gtex/orthologs.txt", col_types = "cc") |>
     mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", ""))
 
 orthologs_filt <- orthologs |>
@@ -80,7 +79,6 @@ corrs <- R2_corr |>
         R = cor(mean_R2_rat, mean_R2_human),
         rho = cor(mean_R2_rat, mean_R2_human, method = "s"),
         n = n(),
-        .groups = "drop"
     ) |>
     mutate(
         stats = str_c("R = ", format(R, digits = 2, nsmall = 2),

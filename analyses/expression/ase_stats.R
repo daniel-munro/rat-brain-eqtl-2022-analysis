@@ -49,9 +49,8 @@ eqtls <- read_tsv("data/eqtls/eqtls_indep.txt", col_types = "ccciiciiccdddddid")
     left_join(afc, by = c("tissue", "gene_id", "variant_id"))
 
 afc_counts <- eqtls |>
-    group_by(tissue) |>
     summarise(n_eQTLs = n(),
               n_eQTLs_with_ASE = sum(!is.na(log2_aFC_ASE)),
-              .groups = "drop") |>
+              .by = tissue) |>
     mutate(eqtls_w_ase = n_eQTLs_with_ASE / n_eQTLs)
 summary(afc_counts)

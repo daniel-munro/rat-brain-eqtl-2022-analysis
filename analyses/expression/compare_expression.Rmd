@@ -60,10 +60,10 @@ expr_df <- expr |>
 rownames(expr_df) <- str_c(expr$rat_id, expr$tissue, sep="_")
 
 comps <- run_pca(expr_df) |>
-    left_join(run_tsne(expr_df), by = "sample") |>
-    left_join(run_umap(expr_df), by = "sample") |>
-    separate(sample, c("rat_id", "tissue"), sep = "_") |>
-    left_join(covar, by = "rat_id")
+    left_join(run_tsne(expr_df), by = "sample", relationship = "one-to-one") |>
+    left_join(run_umap(expr_df), by = "sample", relationship = "one-to-one") |>
+    separate_wider_delim(sample, "_", names = c("rat_id", "tissue")) |>
+    left_join(covar, by = "rat_id", relationship = "many-to-one")
 ```
 
 ```{r}

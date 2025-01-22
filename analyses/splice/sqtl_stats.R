@@ -25,8 +25,7 @@ count(sqtls, tissue, sort = TRUE)
 
 # sGenes found in N tissues:
 sgenes |>
-    group_by(gene_id) |>
-    summarise(n_tissues = n(), .groups = "drop") |>
+    summarise(n_tissues = n(), .by = gene_id) |>
     count(n_tissues) |>
     mutate(frac = n / sum(n))
 
@@ -70,30 +69,23 @@ overlap |>
 # These tables are already filtered, so I'll just count the genes in them:
 expr <- sgenes |>
     distinct(tissue) |>
-    group_by(tissue) |>
-    summarise(
+    reframe(
         read_tsv(
             str_glue("data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
             col_types = cols(gene_id = 'c', .default = '-')
         ),
-        .groups = "drop"
+        .by = tissue
     )
 
 sj <- sgenes |>
     distinct(tissue) |>
-    group_by(tissue) |>
-    summarise(
-        # read_tsv(
-        #     str_glue("data/splice/{tissue}.leafcutter.bed.gz"),
-        #     col_types = cols(`#Chr` = '-', start = '-', end = '-', ID = 'c', .default = 'd')
-        # ) |>
-        #     pivot_longer(-ID, names_to = 'sample', values_to = 'abundance'),
+    reframe(
         read_tsv(
             str_glue("data/splice/{tissue}.leafcutter.phenotype_groups.txt"),
             col_names = c("junction", "gene_id"),
             col_types = "cc"
         ),
-        .groups = "drop"
+        .by = tissue
     ) |>
     distinct(tissue, gene_id)
 
@@ -105,9 +97,8 @@ expr |>
     left_join(
         mutate(sgenes, sqtl = TRUE), by = c("tissue", "gene_id")
     ) |>
-    group_by(tissue) |>
     summarise(n_expr = n(),
               n_alt = sum(!is.na(alt)),
               n_sgene = sum(!is.na(sqtl)),
               frac_sgene = n_sgene / n_alt,
-              .groups = "drop")
+              .by = tissue)

@@ -1,0 +1,115 @@
+---
+title: "trans-eQTLs"
+author: "Daniel Munro"
+date: "11/4/2020"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
+---
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+genes <- read_tsv("../../data/expression/ensembl-gene_inv-quant_NAcc.bed.gz",
+                  col_types = cols(`#chr` = "i", start = "i", gene_id = "c",
+                                   .default = "-")) |>
+    rename(gene_chrom = `#chr`,
+           gene_pos = start)
+
+eqtls <- read_tsv("../../data/tensorqtl/NQCT.trans_qtl_pairs.txt.gz", col_types = "ccd---") |>
+    rename(gene_id = phenotype_id) |>
+    separate_wider_delim(variant_id, ":", names = c("chrom", "pos"),
+                         cols_remove = FALSE) |>
+    mutate(chrom = str_replace(chrom, "chr", "") |> as.integer(),
+           pos = as.integer(pos)) |>
+    left_join(genes, by = "gene_id", relationship = "many-to-one")
+```
+
+## Colocalization
+
+Plot distances to find appropriate trans-eQTL cis-eQTL distance cutoffs. (Note that part of the dropoff at greater distances is due to chromosome edges):
+
+```{r}
+eqtls |>
+    filter(chrom == gene_chrom,
+           abs(pos - gene_pos) < 1e7) |>
+    mutate(TSS_distance = (pos - gene_pos) / 1e6) |>
+    ggplot(aes(x = TSS_distance)) +
+    geom_histogram(bins = 100) +
+    xlab("TSS distance (Mbp)")
+```
+
+To be conservative, define trans-eQTLs as the variant and TSS being on different chromosomes or more than 8 Mbp apart, and cis-eQTLs as the variants and TSS being within 2 Mbp.
+
+```{r}
+tmp <- eqtls |>
+    mutate(cis = chrom == gene_chrom & abs(pos - gene_pos) < 2e6,
+           trans = chrom != gene_chrom | abs(pos - gene_pos) > 8e6,
+           TSS_distance = (pos - gene_pos) / 1e6)
+
+tmp2 <- tmp |>
+    filter(any(cis), any(trans), .by = variant_id) |>
+    filter(cis | trans)
+
+tmp2 |>
+    filter(abs(TSS_distance) < 10) |>
+    ggplot(aes(x = TSS_distance, fill = cis)) +
+    geom_density()
+```
+
+```{r}
+vep <- read_tsv("../../data/vep/vep.txt.gz", comment = "##", na = "-",
+                col_types = "c--cc-c--icc-c") |>
+    filter(!is.na(Protein_position)) |>
+    rename(variant_id = `#Uploaded_variation`) |>
+    distinct(variant_id, .keep_all = TRUE)
+
+cds_eqtls <- eqtls |>
+    mutate(cis = chrom == gene_chrom & abs(pos - gene_pos) < 2e6,
+           trans = chrom != gene_chrom | abs(pos - gene_pos) > 8e6,
+           TSS_distance = (pos - gene_pos) / 1e6) |>
+    left_join(vep, by = "variant_id") |>
+    filter(cis | trans) |>
+    mutate(eQTL_type = if_else(cis, "cis", "trans"),
+           CDS_variant = !is.na(Gene))
+```
+
+cis-eQTLs are more likely than trans-eQTLs to fall in coding sequences:
+
+```{r}
+cds_eqtls |>
+    ggplot(aes(x = eQTL_type, fill = CDS_variant)) +
+    geom_bar(position = "fill") +
+    coord_flip()
+```
+
+CDS cis-eQTLs and trans-eQTLs have similar portions of missense and synonymous:
+
+```{r}
+cds_eqtls |>
+    filter(CDS_variant) |>
+    ggplot(aes(x = eQTL_type, fill = Consequence)) +
+    geom_bar(position = "fill")
+```
+
+## trans-eQTL mediating gene expression and trans-eQTL effect size
+
+If a SNP affects expression of a nearby gene that has a trans-effect on another gene's expression, we might expect that the effect size of this trans-eQTL would be larger in tissues where the mediating gene has higher expression.
+
+Does the expression of a putative trans-eQTL mediating gene (i.e. cis-eGene with same eSNP as trans-eSNP) correlate with aFC of the trans-eQTL across tissues? (Assume aFC = 0 in tissues lacking the trans-eQTL.)
+
+## Inspect 10 trans-eGenes with lowest p-values
+
+```{r}
+eqtls |>
+    mutate(cis = chrom == gene_chrom & abs(pos - gene_pos) < 5e6) |>
+    filter(!cis) |>
+    group_by(gene_id) |>
+    slice_min(pval, n = 1, with_ties = FALSE) |>
+    ungroup() |>
+    slice_min(pval, n = 10) |>
+    select(pval, gene_id, variant_id, gene_chrom, gene_pos)
+```

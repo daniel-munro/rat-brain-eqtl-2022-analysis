@@ -1,0 +1,113 @@
+---
+title: "Fuzzy eQTL overlap"
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
+---
+
+When determining eQTL overlap between tissues, consider the eSNPs. Either use an LD threshold to decide if the two eSNPs represent the same eQTL, or measure overlap quantitatively based on the LD. Use all conditionally independent eQTLs.
+
+I've previously measured LD in the subset individuals in each dataset, but when comparing across tissues the sets of individuals are slightly different. I'll just measure LD over all 88 individuals.
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+load_geno <- function(chrom, start, end) {
+    filename <- "../../data/genotype/P50.rnaseq.88.unpruned.vcf.gz"
+    rng <- GenomicRanges::GRanges(chrom, IRanges::IRanges(start, end))
+    gt <- VariantAnnotation::readGT(filename, param = rng)
+    geno <- apply(gt, 2, function(x) c("0|0" = 0, "0|1" = 1, "1|0" = 1, "1|1" = 2)[x])
+    rownames(geno) <- rownames(gt)
+    t(geno)
+}
+
+.count <- 0
+LD_clusters <- function(geno, variant_id, cutoffs) {
+    .count <<- .count + 1
+    if (.count %% 1000 == 0) { print(.count) }
+    if (length(variant_id) == 1) {
+        return(tibble(cutoff = cutoffs,
+                      variant = 1L,
+                      variant_id = variant_id,
+                      cluster = 1L))
+    }
+    corr <- cor(geno[, variant_id, drop = FALSE])
+    dis <- as.dist(1 - corr ^ 2)
+    # Use WPGMA, which isn't affected by duplicate SNPs:
+    hcl <- hclust(dis, method = "mcquitty")
+    tibble(cutoff = cutoffs) |>
+        summarise(
+            tibble(variant = 1:length(variant_id),
+                   variant_id = variant_id,
+                   cluster = cutree(hcl, h = 1 - cutoff)),
+            .by = cutoff
+        )
+}
+
+eqtls <- read_tsv("../../data/eqtls/eqtls_indep.txt", col_types = "cc---cci---------")
+```
+
+```{r}
+geno <- eqtls |>
+    distinct(chrom, pos) |>
+    with(load_geno(chrom, pos, pos))
+
+ld_cutoffs <- eqtls |>
+    reframe(LD_clusters(geno, variant_id, cutoffs = seq(0, 1, length.out = 11)),
+            .by = gene_id)
+
+ld <- ld_cutoffs |>
+    filter(cutoff == 0.5) |>
+    select(-cutoff)
+```
+
+I'm clustering all conditionally independent eQTLs per gene using LD as similarity measure and average linkage clustering (specifically WPGMA) followed by extracting clusters at different LD thresholds.
+
+This heatmap shows how many clusters of eSNPs there are for each eGene, though it doesn't indicate how many eQTLs each eGene has.
+
+```{r}
+ld_cutoffs |>
+    summarise(n_clusters = n_distinct(cluster),
+              .by = c(gene_id, cutoff)) |>
+    ggplot(aes(x = gene_id, y = cutoff, fill = n_clusters)) +
+    geom_tile() +
+    theme(axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()) +
+    xlab("eGene") +
+    ylab("LD cutoff")
+```
+
+Faceting by number of eQTLs per gene:
+
+```{r}
+ld_cutoffs |>
+    summarise(n_eqtls = n(),
+              n_clusters = n_distinct(cluster),
+              .by = c(gene_id, cutoff)) |>
+    ggplot(aes(x = gene_id, y = cutoff, fill = n_clusters)) +
+    geom_tile() +
+    facet_wrap(~n_eqtls, scales = "free_x") +
+    theme(axis.text.x = element_blank()) +
+    xlab("eGene") +
+    ylab("LD cutoff")
+```
+
+Choosing LD cutoff 0.5 arbitrarily, and numbering clusters within each eGene arbitrarily, here is the number of eQTLs per eGene (either different tissues or independent in the same tissue) and how many clusters they are split into per gene:
+
+```{r}
+ld |>
+    mutate(count = n(),
+           total = sum(cluster),
+           .by = gene_id) |>
+    arrange(desc(count), desc(total)) |>
+    mutate(cluster = as.factor(cluster),
+           gene_id = as.integer(fct_inorder(gene_id))) |>
+    ggplot(aes(x = gene_id, fill = cluster)) +
+    geom_bar() +
+    xlab("eGene") +
+    ylab("No. total eQTLs across tissues")
+```

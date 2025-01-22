@@ -7,6 +7,8 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
 ```
 
 ```{r}
@@ -26,28 +28,25 @@ As a simpler simulation of one locus during HS breeding, model the strains at ge
 
 ```{r}
 next_gen_mnom <- function(counts) {
-    rmultinom(1, sum(counts), counts / sum(counts)) %>% c()
+    rmultinom(1, sum(counts), counts / sum(counts)) |> c()
 }
-# tibble(haplotype = LETTERS[1:8],
-#        count = N / 8) %>%
-#     mutate(p = count / sum(count)) %>%
+
 geno_sim_mnom <- function(pairs = 50, generations = 90) {
-    gens <- list(rmultinom(1, 4 * pairs, rep(1/8, times = 8)) %>% c())
+    gens <- list(rmultinom(1, 4 * pairs, rep(1/8, times = 8)) |> c())
     for (gen in 2:generations) {
         gens <- c(gens, list(next_gen_mnom(gens[[length(gens)]])))
     }
-    gens %>%
-        enframe(name = "generation", value = "counts") %>%
-        rowwise() %>%
-        mutate(counts = list(tibble(strain = LETTERS[1:8], n = counts))) %>%
+    gens |>
+        enframe(name = "generation", value = "counts") |>
+        rowwise() |>
+        mutate(counts = list(tibble(strain = LETTERS[1:8], n = counts))) |>
         unnest(counts)
 }
 
-genos <- tibble(permutation = 1:200) %>%
-    group_by(permutation) %>%
-    summarise(geno_sim_mnom(generations = 300), .groups = "drop")
+genos <- tibble(permutation = 1:200) |>
+    reframe(geno_sim_mnom(generations = 300), .by = permutation)
 
-# write_tsv(genos, "hap_proportions/multinom_sim.tsv")
+write_tsv(genos, "../../data/haplotypes/breeding_sim_multinom.tsv")
 ```
 
 Other model:
@@ -82,18 +81,17 @@ geno_sim <- function(pairs = 50, generations = 90) {
     for (gen in 2:generations) {
         gens <- c(gens, list(next_gen(gens[[length(gens)]])))
     }
-    gens %>%
-        enframe(name = "generation", value = "strain") %>%
+    gens |>
+        enframe(name = "generation", value = "strain") |>
         unnest(strain)
 }
 
-genos <- tibble(permutation = 1:200) %>%
-    group_by(permutation) %>%
-    summarise(geno_sim(generations = 300), .groups = "drop")
+genos <- tibble(permutation = 1:200) |>
+    reframe(geno_sim(generations = 300), .by = permutation)
 
-counts <- genos %>%
+counts <- genos |>
     count(permutation, generation, strain)
 
-# write_tsv(counts, "hap_proportions/simple_sim.tsv")
+write_tsv(counts, "../../data/haplotypes/breeding_sim_simple.tsv")
 ```
 

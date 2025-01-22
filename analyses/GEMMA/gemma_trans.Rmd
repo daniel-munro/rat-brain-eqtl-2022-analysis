@@ -26,8 +26,9 @@ top <- full_join(
     top_lmm |> rename(p_lmm = p_wald),
     by = c("gene_id", "rs")
 ) |>
-    separate(rs, c("chrom", "pos"), sep=":", convert = TRUE, remove = FALSE) |>
-    mutate(chrom = str_replace(chrom, "chr", "")) |>
+    separate_wider_delim(rs, ":", names = c("chrom", "pos"), cols_remove = FALSE) |>
+    mutate(chrom = str_replace(chrom, "chr", ""),
+           pos = as.integer(pos)) |>
     left_join(genes, by = "gene_id") |>
     mutate(type = if_else(gene_chrom == chrom & abs(pos - tss) < 5e6, "cis", "trans"))
 

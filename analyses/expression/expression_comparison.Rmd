@@ -42,15 +42,16 @@ expr <- inner_join(rsem, ase, by = c("gene", "sample")) |>
 
 ```{r}
 cor_gene <- expr |>
-    group_by(gene) |>
-    summarise(median_expr_rsem = median(expr_rsem),
-              median_expr_ase = median(expr_ase),
-              median_expr_laura = median(expr_laura, na.rm = TRUE),
-              corr = if (sd(expr_rsem) > 0 & sd(expr_ase) > 0)
-                  cor(expr_rsem, expr_ase) else NA,
-              corr_s = if (sd(expr_rsem) > 0 & sd(expr_ase) > 0)
-                  cor(expr_rsem, expr_ase, method = "s") else NA,
-              .groups = "drop")
+    summarise(
+        median_expr_rsem = median(expr_rsem),
+        median_expr_ase = median(expr_ase),
+        median_expr_laura = median(expr_laura, na.rm = TRUE),
+        corr = if (sd(expr_rsem) > 0 & sd(expr_ase) > 0)
+            cor(expr_rsem, expr_ase) else NA,
+        corr_s = if (sd(expr_rsem) > 0 & sd(expr_ase) > 0)
+            cor(expr_rsem, expr_ase, method = "s") else NA,
+        .by = gene
+    )
 ```
 
 ```{r}

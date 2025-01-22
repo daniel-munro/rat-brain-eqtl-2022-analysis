@@ -1,0 +1,43 @@
+---
+title: "Tissue-specific eQTLs"
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
+---
+
+Look at the most tissue-specific eQTLs.
+
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+
+eqtls_all <- read_tsv("../../data/eqtls/top_assoc.txt", col_types = "ccciicciccdddddddd")
+eqtls <- filter(eqtls_all, qval < 0.05)
+```
+
+Get eGenes that are specific to one tissue and have the largest ratio of p-values of the significant and the next-strongest association.
+
+```{r}
+spec <- eqtls_all |>
+    mutate(n_tissues = sum(qval < 0.05), .by = gene_id) |>
+    filter(n_tissues == 1) |>
+    group_by(gene_id) |>
+    arrange(pval_beta) |>
+    summarise(ratio = pval_beta[2] / pval_beta[1], .groups = "drop") |>
+    arrange(desc(ratio))
+```
+
+Get human orthologs.
+
+```{r}
+gene_map <- read_tsv("../../data/gtex/orthologs.txt", col_types = "cc")
+
+spec |>
+    slice(1:10) |>
+    left_join(gene_map, by = c("gene_id" = "gene_id_rat"))
+```
+
+LDL receptor related protein 4, lymphocyte antigen 75, chromosome 1 open reading frame 21, ATP binding cassette subfamily A member 12, ?.

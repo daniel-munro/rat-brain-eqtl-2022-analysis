@@ -1,57 +1,58 @@
 ---
 title: "aFC across tissues"
-output: html_notebook
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 ```{r}
-library(tidyverse)
+suppressPackageStartupMessages(library(tidyverse))
 
-tissues <- c(ACCT = "Acbc", ICCT = "IL", LCCT = "LHB", PCCT = "PL", VCCT = "VoLo")
+tissues <- c("IL", "LHb", "NAcc", "OFC", "PL")
 
-expr <- tibble(tissue = tissues) %>%
-    group_by(tissue) %>%
-    summarise(
-        read_tsv(str_glue("../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
+expr <- tibble(tissue = tissues) |>
+    reframe(
+        read_tsv(str_glue("../../data/expression/ensembl-gene_log2_{tissue}.bed.gz"),
                  col_types = cols(`#chr` = "-", start = "-", end = "-",
-                                  gene_id = "c", .default = "d")) %>%
+                                  gene_id = "c", .default = "d")) |>
             pivot_longer(-gene_id, names_to = "rat_id", values_to = "expr"),
-        .groups = "drop"
-    ) %>%
-    group_by(tissue, gene_id) %>%
+        .by = tissue
+    ) |>
     summarise(median_expr = median(expr),
               frac_nonzero = mean(expr > 0),
-              .groups = "drop")
+              .by = c(tissue, gene_id))
 
 # Genes with consistent expression
-consist_expr <- expr %>%
-    group_by(gene_id) %>%
-    filter(min(median_expr) >= 0.5 * max(median_expr)) %>%
-    ungroup() %>%
-    distinct(gene_id) %>%
+consist_expr <- expr |>
+    group_by(gene_id) |>
+    filter(min(median_expr) >= 0.5 * max(median_expr)) |>
+    ungroup() |>
+    distinct(gene_id) |>
     pull()
 
-eqtls_all <- read_tsv("../data/eqtls.txt", col_types = "ccciiddddd") %>%
-    filter(code %in% names(tissues)) %>%
-    mutate(tissue = tissues[code])
+eqtls_all <- read_tsv("../../data/eqtls/top_assoc.txt", col_types = "ccciicciccdddddddd")
 
 eqtls <- filter(eqtls_all, qval < 0.05)
 
-afc <- tibble(tissue = c("Acbc", "IL", "LHB", "PL", "VoLo")) %>%
-    group_by(tissue) %>%
-    summarise(
-        read_tsv(str_glue("../data/specificity/{tissue}.aFC.txt"),
-                 col_types = "cc--d--") %>%
+afc <- tibble(tissue = tissues) |>
+    reframe(
+        read_tsv(str_glue("../../data/specificity/{tissue}.aFC.txt"),
+                 col_types = "cc--d--") |>
             rename(gene_id = pid,
                    variant_id = sid),
-        .groups = "drop"
-    ) %>%
+        .by = tissue
+    ) |>
     filter(gene_id %in% consist_expr,
-           gene_id %in% eqtls$gene_id) %>%
+           gene_id %in% eqtls$gene_id) |>
     # Note which gene/SNP pairs are eQTLs in each tissue:
-    left_join(eqtls %>%
-                  select(tissue, gene_id, variant_id) %>%
+    left_join(eqtls |>
+                  select(tissue, gene_id, variant_id) |>
                   mutate(eQTL = TRUE),
-              by = c("tissue", "gene_id", "variant_id")) %>%
+              by = c("tissue", "gene_id", "variant_id")) |>
     replace_na(list(eQTL = FALSE))
 ```
 
@@ -60,28 +61,27 @@ Compare aFC consistency to eQTL tissue specificity per gene, doing pairwise comp
 ```{r}
 pairs <- crossing(tissue1 = tissues,
                   tissue2 = tissues,
-         gene_id = unique(afc$gene_id)) %>%
-    left_join(afc, by = c("tissue1" = "tissue", "gene_id")) %>%
-    left_join(afc, by = c("tissue2" = "tissue", "gene_id", "variant_id")) %>%
-    filter(eQTL.x | eQTL.y) %>%
+         gene_id = unique(afc$gene_id)) |>
+    left_join(afc, by = c("tissue1" = "tissue", "gene_id"),
+              relationship = "many-to-many") |>
+    left_join(afc, by = c("tissue2" = "tissue", "gene_id", "variant_id"),
+              relationship = "many-to-one") |>
+    filter(eQTL.x | eQTL.y) |>
     mutate(diff = abs(log2_aFC.x - log2_aFC.y),
-           avg = (log2_aFC.x + log2_aFC.y) / 2) %>%
-    group_by(tissue1, tissue2, gene_id) %>%
+           avg = (log2_aFC.x + log2_aFC.y) / 2) |>
     summarise(mean_diff = mean(diff),
               mean_avg = mean(avg),
               shared = any(eQTL.x) & any(eQTL.y),
-              .groups = "drop") %>%
+              .by = c(tissue1, tissue2, gene_id)) |>
     filter(is.finite(mean_diff))
 ```
 
-```{r fig.width = 3, fig.height = 3}
-pairs %>%
+```{r}
+pairs |>
     ggplot(aes(y = mean_diff, x = shared)) +
     facet_grid(rows = vars(tissue1), cols = vars(tissue2)) +
     geom_boxplot(outlier.size = 0.2) +
     coord_cartesian(ylim = c(0, 1)) +
-    # scale_y_log10() +
-    # coord_cartesian(ylim = c(1e-2, 1)) +
     xlab("eQTL in both tissues rather than only one") +
     ylab("Absolute difference in aFC")
 ```
@@ -89,82 +89,78 @@ pairs %>%
 eQTLs found in both tissues seem to have slightly but consistently lower effect size difference than those found in only one of the two tissues. Combining all unique tissue pairs:
 
 ```{r}
-pairs %>%
-    filter(tissue1 < tissue2) %>%
+pairs |>
+    filter(tissue1 < tissue2) |>
     ggplot(aes(y = mean_diff, x = shared)) +
     geom_violin(color = "gray", alpha = 0.5) +
     geom_boxplot(outlier.size = 0.25, width = 0.4) +
-    # coord_cartesian(ylim = c(0, 1)) +
     scale_y_log10() +
-    # coord_cartesian(ylim = c(1e-3, 10))
     xlab("eQTL in both tissues rather than only one") +
     ylab("Absolute difference in aFC")
 ```
 
 ```{r}
-pairs %>%
-    mutate(abs_mean_avg = abs(mean_avg)) %>%
-    filter(tissue1 < tissue2) %>%
+pairs |>
+    mutate(abs_mean_avg = abs(mean_avg)) |>
+    filter(tissue1 < tissue2) |>
     ggplot(aes(y = abs_mean_avg, x = shared)) +
     geom_violin(color = "gray", alpha = 0.5) +
     geom_boxplot(outlier.size = 0.25, width = 0.4) +
-    # coord_cartesian(ylim = c(0, 1)) +
-    # coord_cartesian(ylim = c(1e-3, 10)) +
     xlab("eQTL in both tissues rather than only one") +
     ylab("Absolute average aFC")
 ```
 
 ```{r}
-eqtls %>%
-    mutate(log_pval = -log10(pval)) %>%
-    ggplot(aes(x = log2_aFC_eQTL, y = log_pval)) +
+eqtls |>
+    mutate(log_pval = -log10(pval_beta)) |>
+    ggplot(aes(x = log2_aFC, y = log_pval)) +
     geom_point(size = 0.25, alpha = 0.5) +
     stat_smooth()
 ```
 
 ```{r}
-tmp <- eqtls_all %>%
-    mutate(log_pval = -log10(pval),
-           eQTL = qval < 0.05) %>%
-    group_by(gene_id) %>%
-    filter(n() == 5) %>%
+tmp <- eqtls_all |>
+    mutate(log_pval = -log10(pval_beta),
+           eQTL = qval < 0.05) |>
+    group_by(gene_id) |>
+    filter(n() == 5) |>
     mutate(n_tissues = sum(eQTL),
-           med_logp = median(log_pval)) %>%
-    ungroup() %>%
+           med_logp = median(log_pval)) |>
+    ungroup() |>
     filter(n_tissues > 0)
-tmp %>%
-    mutate(n_tissues = as_factor(n_tissues)) %>%
+tmp |>
+    mutate(n_tissues = as_factor(n_tissues)) |>
     ggplot(aes(x = n_tissues, y = log_pval, color = eQTL)) +
     geom_jitter(size = 0.25, alpha = 0.5) +
     geom_boxplot(alpha = 0.5, outlier.shape = NA)
 ```
 
 ```{r}
-tmp %>%
-    mutate(gene_rank = gene_id %>% fct_reorder(med_logp) %>% as.integer) %>%
+tmp |>
+    mutate(gene_rank = gene_id |> fct_reorder(med_logp) |> as.integer()) |>
     ggplot(aes(x = gene_rank, y = log_pval, color = eQTL)) +
     geom_point(size = 0.25, alpha = 0.5) +
     xlab("eGenes ranked by median -log10(p-value) of all 5 tissues")
 ```
 
 ```{r}
-# # Save gene lists for eGenes in 1 tissues, 5 tissues, and all genes to do GO enrichment.
-# eqtls_all %>%
-#     distinct(gene_id) %>%
-#     pull() %>%
-#     write_lines("GO/all.txt")
-# 
-# tmp %>%
-#     filter(n_tissues == 1) %>%
-#     distinct(gene_id) %>%
-#     pull() %>%
-#     write_lines("GO/single_tissue.txt")
-# 
-# tmp %>%
-#     filter(n_tissues == 5) %>%
-#     distinct(gene_id) %>%
-#     pull() %>%
-#     write_lines("GO/all_tissues.txt")
+# Save gene lists for eGenes in 1 tissues, 5 tissues, and all genes to do GO enrichment.
+eqtls_all |>
+    distinct(gene_id) |>
+    pull() |>
+    write_lines("../../data/specificity/GO/all_genes.txt")
+
+tmp |>
+    filter(n_tissues == 1) |>
+    distinct(gene_id) |>
+    pull() |>
+    write_lines("../../data/specificity/GO/single_tissue.txt")
+
+tmp |>
+    filter(n_tissues == 5) |>
+    distinct(gene_id) |>
+    pull() |>
+    write_lines("../../data/specificity/GO/all_tissues.txt")
 ```
 
 There are actually very few zero expression counts:
@@ -175,20 +171,18 @@ ggplot(expr, aes(x = frac_nonzero)) +
 ```
 
 ```{r}
-expr %>%
-    filter(gene_id %in% eqtls$gene_id) %>%
-    group_by(gene_id) %>%
+expr |>
+    filter(gene_id %in% eqtls$gene_id) |>
     summarise(min_frac_nonzero = min(frac_nonzero),
-              .groups = "drop") %>%
+              .by = gene_id) |>
     summarise(frac = mean(min_frac_nonzero < 0.5))
 ```
 
 ```{r}
-expr %>%
-    filter(gene_id %in% eqtls$gene_id) %>%
-    group_by(gene_id) %>%
+expr |>
+    filter(gene_id %in% eqtls$gene_id) |>
     summarise(foldchange = max(median_expr) / min(median_expr),
-              .groups = "drop") %>%
+              .by = gene_id) |>
     summarise(frac_inconsistent = mean(foldchange > 2, na.rm = TRUE))
 ```
 

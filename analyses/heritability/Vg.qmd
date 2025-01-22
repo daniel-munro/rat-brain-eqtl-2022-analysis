@@ -1,8 +1,12 @@
 ---
 title: "Vg from ANEVA-h"
-output: 
-  html_notebook: 
-    code_folding: hide
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 $V^G$ is ["the expected variance in the dosage that is due to interindividual genetic differences within a population"](https://www.science.org/doi/10.1126/science.aay0256). I obtained precomputed $V^G$ estimates for GTEx (v8) and ran ANEVA-h on my phASER ASE counts to get $V^G$ per gene for HS rat brain tissues.
@@ -12,34 +16,25 @@ suppressPackageStartupMessages(library(tidyverse))
 
 heatmap_order <- function(fac1, fac2, value) {
     df <- tibble(fac1, fac2, value) |>
-        pivot_wider(fac1, names_from = fac2, values_from = value)
+        pivot_wider(id_cols = fac1, names_from = fac2, values_from = value)
     mat <- df |> select(-fac1) |> as.matrix()
     rownames(mat) <- df$fac1
     clust <- hclust(dist(mat))
     factor(fac1, levels = clust$labels[clust$order])
 }
 
-# load("../data/anevah/Vg_GTEx_v7.rda")
-# gtex <- Vg_GTEx_v7 |>
-# gtex <- read_tsv("../data/anevah/Vg_GTEx_v8.txt",
-#                  col_types = cols(IDs = "c", .default = "d")) |>
-#     select(-`...1`) |>
-#     rename(gene_id = IDs) |>
-#     pivot_longer(-gene_id, names_to = "tissue", values_to = "Vg")
-# # rm(Vg_GTEx_v7)
-gtex <- read_tsv("Vg_GTEx_phASER.tsv", col_types = cols(GENE_ID = "c", .default = "d")) |>
+gtex <- read_tsv("../../data/anevah/gtex_phaser_vg.tsv.gz", col_types = cols(GENE_ID = "c", .default = "d")) |>
     rename(gene_id = GENE_ID) |>
     pivot_longer(-gene_id, names_to = "tissue", values_to = "Vg")
 
 rat <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
-    group_by(tissue) |>
-    summarise(
-        read_tsv(str_glue("Vg.{tissue}.tsv.gz"), col_types = "cd"),
-        .groups = "drop"
+    reframe(
+        read_tsv(str_glue("../../data/anevah/output/Vg.{tissue}.tsv.gz"), col_types = "cd"),
+        .by = tissue
     ) |>
     rename(gene_id = GENE_ID)
 
-tissues <- jsonlite::fromJSON("../data/gtex/tissueInfo.json")[[1]] |>
+tissues <- jsonlite::fromJSON("../../data/gtex/tissueInfo.json")[[1]] |>
     select(tissueSiteDetailAbbr,
            tissueSiteDetail) |>
     deframe() |>
@@ -49,7 +44,7 @@ tissues <- jsonlite::fromJSON("../data/gtex/tissueInfo.json")[[1]] |>
       OFC = "Orbitofrontal cortex",
       PL = "Prelimbic cortex")
 
-gene_map <- read_tsv("../data/gtex/orthologs.txt", col_types = "cc") |>
+gene_map <- read_tsv("../../data/gtex/orthologs.txt", col_types = "cc") |>
     mutate(gene_id_human = str_replace(gene_id_human, "\\..+$", ""))
 
 vg_all <- bind_rows(
@@ -65,24 +60,9 @@ vg <- vg_all |>
     filter(data == "rat" | str_sub(tissue, 1, 3) == "BRN")
 ```
 
-```{r}
-# all_ase <- tibble(tissue = unique(rat$tissue)) |>
-#     group_by(tissue) |>
-#     summarise(
-#         tibble(gene_id = str_glue("../data/anevah/anevah_{tissue}_ref_counts.tsv") |>
-#                    read.delim(sep = "\t", row.names = 1) |>
-#                    rownames()),
-#         .groups = "drop"
-#     ) |>
-#     left_join(df, by = c("tissue", "gene_id"))
-# 
-# mean(!is.na(gtex$Vg))
-# mean(!is.na(all_ase$Vg))
-```
-
 Number of rat genes with Vg estimates is on the low range of GTEx:
 
-```{r fig.width = 4.5}
+```{r fig.width = 9, fig.height = 6}
 vg_all |>
     mutate(tissue = tissues[tissue] |> fct_infreq()) |>
     ggplot(aes(x = tissue, fill = data)) +
@@ -92,11 +72,7 @@ vg_all |>
 
 Correlations in Vg for GTEx tissue pairs. Rows/cols are ordered as if there were dendrograms:
 
-```{r fig.width = 5, fig.height = 4}
-# vg |>
-#     filter(data == "GTEx") |>
-#     pivot_wider(gene_id, names_from = "tissue", values_from = "Vg") |>
-#     select(-gene_id)
+```{r fig.width = 10, fig.height = 10}
 cor_gtex <- vg_all |>
     filter(data != "rat") |>
     with(crossing(tissue.x = unique(tissue),
@@ -108,10 +84,9 @@ cor_gtex <- vg_all |>
               by = c("tissue.y", "gene_id")) |>
     filter(!is.na(Vg.x),
            !is.na(Vg.y)) |>
-    group_by(tissue.x, tissue.y) |>
     summarise(r = cor(Vg.x, Vg.y),
               n = n(),
-              .groups = "drop")
+              .by = c(tissue.x, tissue.y))
 
 cor_gtex |>
     mutate(tissue.x = tissues[tissue.x],
@@ -141,10 +116,9 @@ cor_rat <- vg |>
               by = c("tissue.y", "gene_id")) |>
     filter(!is.na(Vg.x),
            !is.na(Vg.y)) |>
-    group_by(tissue.x, tissue.y) |>
     summarise(r = cor(Vg.x, Vg.y),
               n = n(),
-              .groups = "drop")
+              .by = c(tissue.x, tissue.y))
 
 cor_rat |>
     mutate(tissue.x = tissues[tissue.x],
@@ -172,8 +146,7 @@ has_vg <- gene_map |>
 cor_all <- vg |>
     with(crossing(tissue.x = unique(tissue),
                   tissue.y = unique(tissue))) |>
-    group_by(tissue.x, tissue.y) |>
-    summarise({
+    reframe({
         data.x <- vg |>
             filter(tissue == tissue.x) |>
             with(unique(data))
@@ -214,14 +187,13 @@ cor_all <- vg |>
                     by = c("gene_id.y" = "gene_id")
                 )
         }
-    }, .groups = "drop") |>
-    group_by(tissue.x, tissue.y) |>
+    }, .by = c(tissue.x, tissue.y)) |>
     summarise(r = cor(Vg.x, Vg.y),
               n = n(),
-              .groups = "drop")
+              .by = c(tissue.x, tissue.y))
 ```
 
-```{r  fig.width = 3, fig.height = 3}
+```{r}
 cor_all |>
     mutate(tissue.x = tissues[tissue.x],
            tissue.y = tissues[tissue.y],
@@ -232,7 +204,6 @@ cor_all |>
     coord_fixed() +
     expand_limits(fill = 0) +
     scale_fill_viridis_c() +
-    # scale_fill_gradient2() +
     xlab(NULL) +
     ylab(NULL) +
     theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
@@ -240,7 +211,7 @@ cor_all |>
 
 Number of ortholog pairs with Vg, used to calculate the above:
 
-```{r  fig.width = 3, fig.height = 3}
+```{r}
 cor_all |>
     mutate(tissue.x = tissues[tissue.x],
            tissue.y = tissues[tissue.y],
@@ -249,8 +220,6 @@ cor_all |>
     ggplot(aes(x = tissue.x, y = tissue.y, fill = n)) +
     geom_tile() +
     coord_fixed() +
-    # scale_fill_viridis_c() +
-    # scale_fill_gradient() +
     xlab(NULL) +
     ylab(NULL) +
     theme(axis.text.x = element_text(hjust = 1, vjust = 0.5, angle = 90))
@@ -263,15 +232,15 @@ mean_ortho <- gene_map |>
     inner_join(
         vg |>
             filter(data == "rat") |>
-            group_by(gene_id) |>
-            summarise(SDg_rat = mean(sqrt(Vg)), .groups = "drop"),
+            summarise(SDg_rat = mean(sqrt(Vg)),
+                      .by = gene_id),
         by = c("gene_id_rat" = "gene_id")
     ) |>
     inner_join(
         vg |>
             filter(data == "GTEx_brain") |>
-            group_by(gene_id) |>
-            summarise(SDg_GTEx = mean(sqrt(Vg)), .groups = "drop"),
+            summarise(SDg_GTEx = mean(sqrt(Vg)),
+                      .by = gene_id),
         by = c("gene_id_human" = "gene_id")
     )
 

@@ -19,10 +19,8 @@ geno <- apply(gt, 2, function(x) c("0|0" = 0, "0|1" = 1, "1|0" = 1, "1|1" = 2)[x
 rownames(geno) <- rownames(gt)
 rm(gt)
 
-
 ld_pairs <- esnps |>
-    group_by(gene_id) |>
-    summarise(
+    reframe(
         crossing(tissue.x = unique(tissue),
                  tissue.y = unique(tissue)) |>
             filter(tissue.x < tissue.y) |>
@@ -31,12 +29,13 @@ ld_pairs <- esnps |>
                       by = "tissue.x") |>
             left_join(tibble(tissue.y = tissue,
                              variant_id.y = variant_id),
-                      by = "tissue.y")
+                      by = "tissue.y"),
+        .by = gene_id
     )
 
 ld <- crossing(gene_id = unique(esnps$gene_id),
-                     tissue.x = unique(esnps$tissue),
-                     tissue.y = unique(esnps$tissue)) |>
+               tissue.x = unique(esnps$tissue),
+               tissue.y = unique(esnps$tissue)) |>
     filter(tissue.x < tissue.y) |>
     left_join(rename(esnps, tissue.x = tissue),
               by = c("gene_id", "tissue.x")) |>
@@ -47,8 +46,6 @@ ld <- crossing(gene_id = unique(esnps$gene_id),
     mutate(r2 = r2(geno[variant_id.x, , drop = FALSE],
                    geno[variant_id.y, , drop = FALSE]))
 
-# write_tsv(ld, "specificity/tissue_eSNP_LD.txt")
-
 ld |>
     ggplot(aes(x = r2)) +
     geom_histogram(bins = 100) +
@@ -57,4 +54,4 @@ ld |>
     ggtitle("LD between top eSNPs for same gene in different tissues",
             subtitle = str_glue("Median: {median(ld$r2) |> round(2)}, Mean: {mean(ld$r2) |> round(2)}, {round(100 * mean(ld$r2 == 1))}% are 1, {round(100 * mean(ld$r2 > 0.6))}% are above 0.6"))
 
-ggsave("specificity/tissue_eSNP_LD.png", width = 6, height = 4)
+ggsave("analyses/specificity/tissue_eSNP_LD.png", width = 6, height = 4)

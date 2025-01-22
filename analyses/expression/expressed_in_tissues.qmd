@@ -23,11 +23,10 @@ expr <- tibble(tissue = unique(top_assoc$tissue)) |>
             pivot_longer(-gene_id, names_to = "rat_id", values_to = "expr"),
         .by = tissue
     ) |>
-    group_by(tissue, gene_id) |>
     summarise(median_expr = median(expr),
               expressed = median_expr > 0,
               frac_nonzero = mean(expr > 0),
-              .groups = "drop")
+              .by = c(tissue, gene_id))
 
 genes <- top_assoc |>
     left_join(expr, by = c("tissue", "gene_id")) |>
@@ -56,9 +55,8 @@ counts_fracs <- tibble(frac = seq(from = 0.5, to = 1, by = 0.05)) |>
     reframe(
         expr |>
             mutate(expressed = frac_nonzero >= unique(frac)) |>
-            group_by(gene_id) |>
             summarise(n_expressed = sum(expressed),
-                      .groups = "drop") |>
+                      .by = gene_id) |>
             count(n_expressed),
         .by = frac
     )
@@ -73,4 +71,3 @@ counts_fracs |>
     ylab("Genes") +
     theme_minimal()
 ```
-

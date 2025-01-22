@@ -1,9 +1,9 @@
 library(tidyverse)
 library(patchwork)
 
-d_afc <- read_tsv("analysis/orthologs/ortholog_aFC.tsv", col_types = "ccdd")
-d_h2 <- read_tsv("analysis/orthologs/ortholog_h2.tsv", col_types = "ccdd")
-d_sdg <- read_tsv("analysis/orthologs/ortholog_SDg.tsv", col_types = "ccdd")
+d_afc <- read_tsv("data/gtex/orthologs/ortholog_aFC.tsv", col_types = "ccdd")
+d_h2 <- read_tsv("data/gtex/orthologs/ortholog_h2.tsv", col_types = "ccdd")
+d_sdg <- read_tsv("data/gtex/orthologs/ortholog_SDg.tsv", col_types = "ccdd")
 d <- bind_rows(
     d_afc |>
         rename(rat = mean_abs_rat,
@@ -23,34 +23,27 @@ human_genes <- read_tsv("data/gtex/gtex_genes.txt", col_types = "cc", col_names 
     select(name, id) |>
     deframe()
 
-gsets <- read_tsv("data/gtex/GeneSets.txt", col_types = cols(.default = "c"), comment = "#") |>
-    mutate(across(-starts_with("Autosomal"), ~ human_genes[.x])) |>
-    pivot_longer(everything(), names_to = "set", values_to = "gene_id_human") |>
-    filter(!is.na(gene_id_human)) |>
-    mutate(set = str_replace_all(set, "zz", "")) |>
-    distinct() |>
+gsets <- read_tsv("data/gtex/orthologs/gene_sets.tsv", col_types = "cc") |>
     bind_rows(tibble(set = "All (unfiltered)",
                      gene_id_human = unique(d$gene_id_human)))
 
 gsets |>
-    group_by(set) |>
     summarise(n_in_eQTL_orthologs = sum(gene_id_human %in% d$gene_id_human),
               n_total = n(),
-              .groups = "drop") |>
+              .by = set) |>
     mutate(frac = n_in_eQTL_orthologs / n_total) |>
     arrange(frac) |>
     print.data.frame()
 
 d_sets <- d |>
-    inner_join(gsets, by = "gene_id_human")
+    inner_join(gsets, by = "gene_id_human", relationship = "many-to-many")
 
 stats <- d_sets |>
-    group_by(set, stat) |>
     summarise(
         pairs = n(),
         pearson = cor(rat, human),
         pearson_p = cor.test(rat, human)$p.value,
-        .groups = "drop"
+        .by = c(set, stat)
     ) |>
     rowwise() |>
     mutate(
@@ -60,13 +53,6 @@ stats <- d_sets |>
                     sep = "\n")
     ) |>
     ungroup()
-
-# d_sets |>
-#     ggplot(aes(x = rat, y = human)) +
-#     facet_grid(rows = vars(set), cols = vars(stat), scales = "free_x") +
-#     geom_point(size = 1, alpha = 0.5) +
-#     coord_fixed() +
-#     theme_bw()
 
 p1 <- d_sets |>
     filter(stat == "aFC") |>
@@ -97,5 +83,4 @@ p3 <- d_sets |>
     theme_bw()
 
 p1 + p2 + p3
-ggsave("analysis/orthologs/ortholog_gene_sets.png", width = 10, height = 50, dpi = 100, limitsize = FALSE)
- 
+ggsave("analyses/orthologs/ortholog_gene_sets_scatter.png", width = 10, height = 50, dpi = 100, limitsize = FALSE)

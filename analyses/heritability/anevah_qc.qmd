@@ -1,6 +1,12 @@
 ---
 title: "anevah QC"
-output: html_notebook
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 I'm comparing Vg values with the anevah input ASE counts to see the relationship.
@@ -8,38 +14,35 @@ I'm comparing Vg values with the anevah input ASE counts to see the relationship
 These are total ref + alt counts across samples.
 
 ```{r}
-library(tidyverse)
+suppressPackageStartupMessages(library(tidyverse))
 library(patchwork)
 
 ase <- crossing(tissue = c("IL", "LHb", "NAcc", "OFC", "PL"),
                 allele = c("ref", "alt")) |>
-    group_by(tissue, allele) |>
-    summarise(
+    reframe(
         read.delim(
-            str_glue("../../../data/anevah/anevah_{tissue}_{allele}_counts.tsv"),
+            str_glue("../../data/anevah/input/anevah_{tissue}_{allele}_counts.tsv"),
             header = TRUE,
             row.names = 1,
             as.is = TRUE,
         ) |>
             as_tibble(rownames = "gene_id") |>
             pivot_longer(-gene_id, names_to = "sample", values_to = "count"),
-        .groups = "drop"
+        .by = c(tissue, allele)
     ) |>
     pivot_wider(id_cols = c(tissue, gene_id, sample), names_from = allele, values_from = count)
 
 vg <- tibble(tissue = c("IL", "LHb", "NAcc", "OFC", "PL")) |>
-    group_by(tissue) |>
-    summarise(
-        read_tsv(str_glue("../../../analysis/Vg/anevah/Vg.{tissue}.tsv.gz"), col_types = "cd"),
-        .groups = "drop"
+    reframe(
+        read_tsv(str_glue("../../data/anevah/output/Vg.{tissue}.tsv.gz"), col_types = "cd"),
+        .by = tissue
     ) |>
     rename(gene_id = GENE_ID)
 
 df <- ase |>
-    group_by(tissue, gene_id) |>
     summarise(meanlogfc = mean(log2(ref / alt), na.rm = TRUE),
               counts = sum(ref + alt),
-              .groups = "drop") |>
+              .by = c(tissue, gene_id)) |>
     left_join(vg, by = c("tissue", "gene_id"))
 ```
 
@@ -127,16 +130,15 @@ p2 <- ase |>
 p1 / p2
 ```
 
-
 ## GTEx
 
 ```{r}
-kept_gtex <- read_csv("../../../data/anevah/Vg_estimates_phaser_tuned.csv",
+kept_gtex <- read_csv("../../data/anevah/Vg_estimates_phaser_tuned.csv",
                       col_types = cols(.default = "c")) |>
     pivot_longer(everything(), names_to = "tissue", values_to = "GENE_ID") |>
     filter(!is.na(GENE_ID))
 
-vg_gtex <- list.files("../../../data/anevah/gtex", pattern = "*.txt", recursive = TRUE,
+vg_gtex <- list.files("../../data/anevah/gtex", pattern = "*.txt", recursive = TRUE,
                       full.names = TRUE) |>
     read_tsv(col_types = "cd-", id = "path") |>
     mutate(tissue = str_match(path, "gtex/(\\w+)/Common")[, 2], .after = path) |>
@@ -144,7 +146,7 @@ vg_gtex <- list.files("../../../data/anevah/gtex", pattern = "*.txt", recursive 
     select(-path) |>
     rename(Vg = Vg_GeneWise) |>
     filter(!is.na(Vg)) |>
-    left_join(mutate(kept, kept = TRUE), by = c("tissue", "GENE_ID")) |>
+    left_join(mutate(kept_gtex, kept = TRUE), by = c("tissue", "GENE_ID")) |>
     replace_na(list(kept = FALSE))
 ```
 
@@ -153,4 +155,3 @@ vg_gtex |>
     ggplot(aes(x = kept, y = sqrt(Vg))) +
     geom_boxplot()
 ```
-

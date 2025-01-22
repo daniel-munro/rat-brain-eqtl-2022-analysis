@@ -58,10 +58,9 @@ The medians are interesting:
 
 ```{r}
 both |>
-    group_by(tissue) |>
     summarise(mean_log2_aFC = mean(log2_aFC),
               median_log2_aFC = median(log2_aFC),
-              .groups = "drop") |>
+              .by = tissue) |>
     pivot_longer(c(mean_log2_aFC, median_log2_aFC),
                  names_to = "stat", values_to = "value") |>
     ggplot(aes(x = tissue, y = value, color = stat)) +

@@ -37,9 +37,9 @@ d <- tibble(chrom = 1:20) |>
     reframe(
         readRDS(str_glue("data/haplotypes/haplotype_probs_chr{chrom}.rds")) |>
             probs() |>
-            separate(SNP, c("chr", "pos"), sep = ":", convert = TRUE) |>
-            group_by(pos, strain) |>
-            summarise(prob = mean(prob), .groups = "drop"),
+            separate_wider_delim(SNP, ":", names = c("chr", "pos"), sep = ":") |>
+            mutate(pos = as.integer(pos)) |>
+            summarise(prob = mean(prob), .by = c(pos, strain)),
         .by = chrom
     ) |>
     mutate(pos = as.factor(pos))

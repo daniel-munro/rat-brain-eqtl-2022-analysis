@@ -1,50 +1,41 @@
 ---
 title: "GTEx tissue specificity"
-output: html_notebook
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 How much do GTEx eGenes overlap among the brain tissues compared to the rat brain tissues?
 
 ```{r}
-library(tidyverse)
+suppressPackageStartupMessages(library(tidyverse))
 
-gtex <- tibble(file = list.files("../data/gtex/GTEx_Analysis_v8_eQTL", "Brain_.+",
-                                 full.names = TRUE)) %>%
-    mutate(tissue = str_match(file, "Brain_(.+)\\.v8")[, 2]) %>%
-    group_by(file, tissue) %>%
-    summarise(
+gtex <- tibble(file = list.files("../../data/gtex/GTEx_Analysis_v8_eQTL", "Brain_.+",
+                                 full.names = TRUE)) |>
+    mutate(tissue = str_match(file, "Brain_(.+)\\.v8")[, 2]) |>
+    reframe(
         read_tsv(file, col_types = cols(gene_id = "c", qval = "d", .default = "-")),
-        .groups = "drop"
-    ) %>%
-    filter(qval <= 0.05) %>%  # GTEx site says to do <=
+        .by = c(file, tissue)
+    ) |>
+    filter(qval <= 0.05) |>  # GTEx site says to do <=
     select(-file, -qval)
 
-rats <- read_tsv("../data/eqtls.txt", col_types = "cc----d---") %>%
-    filter(qval < 0.05) %>%
-    select(tissue, gene_id)
+rats <- read_tsv("../../data/eqtls/eqtls_indep.txt", col_types = "cc---------------")
 
 eqtls <- bind_rows(
-    gtex %>% mutate(data = "GTEx"),
-    rats %>% mutate(data = "rats")
+    gtex |> mutate(data = "GTEx"),
+    rats |> mutate(data = "rats")
 )
 ```
 
 ```{r}
-# gtex %>%
-#     ggplot(aes(x = tissue)) +
-#     geom_bar() +
-#     coord_flip() +
-#     ggtitle("GTEx brain tissues")
-# 
-# rats %>%
-#     ggplot(aes(x = tissue)) +
-#     geom_bar() +
-#     coord_flip() +
-#     ggtitle("HS rat brain tissues")
-
-eqtls %>%
+eqtls |>
     mutate(data = fct_rev(data),
-           tissue = fct_rev(tissue)) %>%
+           tissue = fct_rev(tissue)) |>
     ggplot(aes(x = tissue)) +
     facet_grid(rows = "data", scales = "free_y", space = "free_y") +
     geom_bar() +
@@ -66,18 +57,17 @@ overlap <- bind_rows(
     crossing(data = "rats",
              tissue.x = unique(rats$tissue),
              tissue.y = unique(rats$tissue))
-) %>%
-    filter(tissue.x < tissue.y) %>%
-    group_by(data, tissue.x, tissue.y) %>%
+) |>
+    filter(tissue.x < tissue.y) |>
     summarise({
         set1 <- eqtls$gene_id[eqtls$tissue == tissue.x]
         set2 <- eqtls$gene_id[eqtls$tissue == tissue.y]
         tibble(n_intersection = length(intersect(set1, set2)),
-               n_union = length(union(set1, set2))) %>%
+               n_union = length(union(set1, set2))) |>
             mutate(jaccard = n_intersection / n_union)
-    }, .groups = "drop")
+    }, .by = c(data, tissue.x, tissue.y))
 
-overlap %>%
+overlap |>
     ggplot(aes(x = data, y = jaccard)) +
     geom_boxplot(outlier.shape = NA) +
     ggbeeswarm::geom_beeswarm(size = 1, color = "blue")
@@ -88,21 +78,20 @@ Overlap in rat brain tissues tends to be higher, despite having overall smaller 
 As a simplistic correction for that, subset the GTEx tissues to the 5 with the fewest eGenes.
 
 ```{r}
-gtex_subset <- gtex %>%
-    count(tissue, sort = TRUE) %>%
+gtex_subset <- gtex |>
+    count(tissue, sort = TRUE) |>
     slice_tail(n = 5)
 
-overlap %>%
+overlap |>
     filter(data == "rats" | (tissue.x %in% gtex_subset$tissue &
-                                 tissue.y %in% gtex_subset$tissue)) %>%
+                                 tissue.y %in% gtex_subset$tissue)) |>
     ggplot(aes(x = data, y = jaccard)) +
     geom_boxplot(outlier.shape = NA) +
     ggbeeswarm::geom_beeswarm(size = 1, color = "blue")
 ```
 
 ```{r}
-overlap %>%
-    # filter(data == "rats") %>%
+overlap |>
     ggplot(aes(x = n_union, y = n_intersection, color = data)) +
     geom_point(size = 1, alpha = 0.5) +
     expand_limits(x = 0, y = 0) +
@@ -120,37 +109,34 @@ overlap %>%
 Do eGenes found in more tissues have different effect sizes than those in fewer tissues?
 
 ```{r}
-gtex_afc <- tibble(file = list.files("../data/gtex/GTEx_Analysis_v8_eQTL", "Brain_.+",
-                                 full.names = TRUE)) %>%
-    mutate(tissue = str_match(file, "Brain_(.+)\\.v8")[, 2]) %>%
-    group_by(file, tissue) %>%
-    summarise(
+gtex_afc <- tibble(file = list.files("../../data/gtex/GTEx_Analysis_v8_eQTL", "Brain_.+",
+                                     full.names = TRUE)) |>
+    mutate(tissue = str_match(file, "Brain_(.+)\\.v8")[, 2]) |>
+    reframe(
         read_tsv(file, col_types = cols(gene_id = "c", pval_beta = "d", qval = "d",
                                         log2_aFC = "d", .default = "-")),
-        .groups = "drop"
-    ) %>%
-    filter(qval <= 0.05) %>%  # GTEx site says to do <=
+        .by = c(file, tissue)
+    ) |>
+    filter(qval <= 0.05) |>  # GTEx site says to do <=
     select(-file, -qval)
 
-rats_afc <- read_tsv("../data/eqtls.txt", col_types = "cc---dd-d-") %>%
-    filter(qval < 0.05) %>%
-    select(tissue, gene_id, pval_beta = pval, log2_aFC = log2_aFC_eQTL)
+rats_afc <- read_tsv("../../data/eqtls/eqtls_indep.txt", col_types = "cc------------d-d") |>
+    select(tissue, gene_id, pval_beta, log2_aFC)
 
 afc <- bind_rows(
-    gtex_afc %>% mutate(data = "GTEx"),
-    rats_afc %>% mutate(data = "rats")
+    gtex_afc |> mutate(data = "GTEx"),
+    rats_afc |> mutate(data = "rats")
 )
 ```
 
 ```{r}
-afc %>%
-    filter(data == "rats") %>%
-    group_by(gene_id) %>%
-    mutate(n_tissues = n()) %>%
-    ungroup() %>%
+afc |>
+    filter(data == "rats") |>
+    mutate(n_tissues = n_distinct(tissue),
+           .by = gene_id) |>
     mutate(n_tissues = as.factor(n_tissues),
-           log10_pval = -log10(pval_beta)) %>%
-    sample_n(nrow(.)) %>%
+           log10_pval = -log10(pval_beta)) |>
+    slice_sample(prop = 1) |>
     ggplot(aes(x = log2_aFC, y = log10_pval, color = n_tissues)) +
     facet_wrap(~ tissue) +
     geom_point(size = 0.5, alpha = 0.75) +
@@ -161,13 +147,11 @@ afc %>%
 ```
 
 ```{r}
-afc %>%
-    filter(data == "GTEx") %>%
-    group_by(gene_id) %>%
-    mutate(n_tissues = n()) %>%
-    ungroup() %>%
-    mutate(log10_pval = -log10(pval_beta)) %>%
-    sample_n(nrow(.)) %>%
+afc |>
+    filter(data == "GTEx") |>
+    mutate(n_tissues = n(), .by = gene_id) |>
+    mutate(log10_pval = -log10(pval_beta)) |>
+    slice_sample(prop = 1) |>
     ggplot(aes(x = log2_aFC, y = log10_pval, color = n_tissues)) +
     facet_wrap(~ tissue) +
     geom_point(size = 0.5, alpha = 0.75) +

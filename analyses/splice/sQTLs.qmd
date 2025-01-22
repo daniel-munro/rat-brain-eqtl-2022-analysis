@@ -1,12 +1,18 @@
 ---
 title: "Splice QTLs"
-output: html_notebook
+author: "Daniel Munro"
+format:
+  html:
+    embed-resources: true
+editor: visual
+execute:
+  echo: false
 ---
 
 ```{r}
 suppressPackageStartupMessages(library(tidyverse))
 
-top_assoc <- read_tsv("../../data/splice/top_assoc_splice.txt", col_types = "ccicciidddddcii")
+top_assoc <- read_tsv("../../data/splice/top_assoc_splice.txt", col_types = "ccicciidddddcidd")
 
 sqtls <- read_tsv("../../data/splice/sqtls_indep.txt", col_types = "cciccicdddddcii")
 
@@ -19,10 +25,6 @@ sgenes <- sqtls |>
 nrow(sqtls)
 
 count(sqtls, rank)
-
-# sqtls |>
-#     ggplot(aes(x = tss_distance)) +
-#     geom_histogram(bins = 50)
 ```
 
 ```{r}
